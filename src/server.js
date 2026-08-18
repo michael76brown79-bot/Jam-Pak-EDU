@@ -5,6 +5,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const { questions } = require('./questions');
 
 const app = express();
@@ -17,14 +19,34 @@ const PORT = process.env.PORT || 3001;
 const rooms = new Map();   // roomCode → { host, players: [], state, questions, round }
 const users = new Map();   // username → { username, role, passwordHash }
 
+// ── Rate limiters ─────────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
+const generalLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,  // 1 minute
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function generateRoomCode() {
   return crypto.randomBytes(3).toString('hex').toUpperCase(); // e.g. "A3F2C1"
 }
 
-function hashPassword(pw) {
-  return crypto.createHash('sha256').update(pw).digest('hex');
+async function hashPassword(pw) {
+  return bcrypt.hash(pw, 10);
+}
+
+async function verifyPassword(pw, hash) {
+  return bcrypt.compare(pw, hash);
 }
 
 function pickQuestions(count = 5) {
@@ -35,11 +57,12 @@ function pickQuestions(count = 5) {
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(generalLimiter);
 
 // ── REST API ──────────────────────────────────────────────────────────────────
 
 // Signup
-app.post('/api/signup', (req, res) => {
+app.post('/api/signup', authLimiter, async (req, res) => {
   const { username, password, role } = req.body || {};
   if (!username || !password || !['teacher', 'student'].includes(role)) {
     return res.status(400).json({ error: 'username, password and role (teacher|student) required' });
@@ -47,15 +70,16 @@ app.post('/api/signup', (req, res) => {
   if (users.has(username)) {
     return res.status(409).json({ error: 'Username already taken' });
   }
-  users.set(username, { username, role, passwordHash: hashPassword(password) });
+  const passwordHash = await hashPassword(password);
+  users.set(username, { username, role, passwordHash });
   return res.status(201).json({ message: 'Account created', username, role });
 });
 
 // Login
-app.post('/api/login', (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   const user = users.get(username);
-  if (!user || user.passwordHash !== hashPassword(password)) {
+  if (!user || !(await verifyPassword(password, user.passwordHash))) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
   return res.json({ message: 'Login successful', username: user.username, role: user.role });
