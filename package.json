@@ -1,0 +1,22 @@
+{
+  "name": "jam-pak-edu",
+  "version": "1.0.0",
+  "description": "Jamaican-themed educational game prototype",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node src/server.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/michael76brown79-bot/Jam-Pak-EDU"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3",
+    "uuid": "^14.0.1"
+  }
+}

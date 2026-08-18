@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jam-Pak EDU</title>
+  <style>
+    :root {
+      --green:  #007A3D;
+      --gold:   #FED100;
+      --black:  #000000;
+      --white:  #ffffff;
+      --light:  #f5f5f0;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: var(--light);
+      color: var(--black);
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--black);
+      color: var(--gold);
+      text-align: center;
+      padding: 1rem;
+      font-size: 1.8rem;
+      font-weight: bold;
+      letter-spacing: 2px;
+    }
+    header span { color: var(--green); }
+
+    nav {
+      display: flex;
+      justify-content: center;
+      gap: .5rem;
+      flex-wrap: wrap;
+      background: var(--green);
+      padding: .5rem;
+    }
+    nav button {
+      background: var(--gold);
+      color: var(--black);
+      border: none;
+      border-radius: var(--radius);
+      padding: .5rem 1.2rem;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: .9rem;
+      transition: opacity .2s;
+    }
+    nav button:hover { opacity: .85; }
+    nav button.active { background: var(--white); }
+
+    main {
+      max-width: 700px;
+      margin: 2rem auto;
+      padding: 1rem;
+    }
+
+    .card {
+      background: var(--white);
+      border-radius: var(--radius);
+      border-left: 6px solid var(--green);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    }
+    .card h2 {
+      color: var(--green);
+      margin-bottom: 1rem;
+    }
+
+    label { display: block; margin: .5rem 0 .2rem; font-weight: bold; font-size: .9rem; }
+    input, select {
+      width: 100%;
+      padding: .5rem;
+      border: 2px solid #ccc;
+      border-radius: 6px;
+      font-size: 1rem;
+      margin-bottom: .5rem;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--green); }
+
+    .btn {
+      background: var(--green);
+      color: var(--white);
+      border: none;
+      border-radius: var(--radius);
+      padding: .6rem 1.4rem;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: bold;
+      margin-top: .5rem;
+      transition: opacity .2s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-gold { background: var(--gold); color: var(--black); }
+    .btn-sm { padding: .4rem .9rem; font-size: .85rem; }
+
+    .room-code {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: var(--green);
+      letter-spacing: 8px;
+      text-align: center;
+      padding: 1rem;
+      background: var(--light);
+      border-radius: var(--radius);
+      margin: .5rem 0;
+    }
+
+    .options-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .8rem;
+      margin-top: 1rem;
+    }
+    .option-btn {
+      background: var(--light);
+      border: 2px solid var(--green);
+      border-radius: 8px;
+      padding: .7rem;
+      cursor: pointer;
+      font-size: 1rem;
+      text-align: left;
+      transition: background .2s;
+    }
+    .option-btn:hover { background: var(--gold); }
+    .option-btn.correct { background: #b6f5c6; border-color: var(--green); }
+    .option-btn.wrong   { background: #f5b6b6; border-color: red; }
+
+    .score-board { font-size: .95rem; }
+    .score-board .player-row {
+      display: flex;
+      justify-content: space-between;
+      padding: .3rem 0;
+      border-bottom: 1px solid #eee;
+    }
+
+    .tag {
+      display: inline-block;
+      background: var(--green);
+      color: var(--white);
+      border-radius: 20px;
+      padding: .1rem .6rem;
+      font-size: .75rem;
+      margin-right: .3rem;
+    }
+
+    .hidden { display: none !important; }
+
+    .msg { padding: .5rem; border-radius: 6px; margin: .5rem 0; font-size: .9rem; }
+    .msg.success { background: #d4edda; color: #155724; }
+    .msg.error   { background: #f8d7da; color: #721c24; }
+    .msg.info    { background: #d1ecf1; color: #0c5460; }
+
+    .players-list { list-style: none; padding: 0; }
+    .players-list li { padding: .3rem .5rem; background: var(--light); border-radius: 6px; margin: .25rem 0; }
+
+    .debate-box {
+      background: #fffbea;
+      border: 2px dashed var(--gold);
+      border-radius: var(--radius);
+      padding: 1rem;
+      font-size: 1.1rem;
+      font-style: italic;
+      text-align: center;
+    }
+    .side-btns { display: flex; gap: 1rem; margin-top: 1rem; }
+    .side-btn {
+      flex: 1;
+      padding: .7rem;
+      border-radius: var(--radius);
+      border: 2px solid;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 1rem;
+    }
+    .side-btn.for   { background: #d4edda; border-color: var(--green); color: var(--green); }
+    .side-btn.against { background: #f8d7da; border-color: #c00; color: #c00; }
+    .side-btn.selected { opacity: 1; box-shadow: 0 0 0 3px var(--gold); }
+    .side-btn:not(.selected) { opacity: .7; }
+
+    #progress-bar-wrap { background: #ddd; border-radius: 20px; height: 8px; margin: .5rem 0; }
+    #progress-bar { background: var(--green); height: 8px; border-radius: 20px; transition: width .3s; }
+
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      color: #888;
+      font-size: .85rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>🇯🇲 Jam-Pak <span>EDU</span></header>
+
+<nav>
+  <button id="nav-home"    class="active" onclick="showSection('home')">Home</button>
+  <button id="nav-signup"  onclick="showSection('signup')">Sign Up</button>
+  <button id="nav-host"    onclick="showSection('host')">Host Game</button>
+  <button id="nav-join"    onclick="showSection('join')">Join Game</button>
+  <button id="nav-solo"    onclick="showSection('solo')">Solo Study</button>
+  <button id="nav-debate"  onclick="showSection('debate')">Debate</button>
+</nav>
+
+<main>
+
+<!-- HOME -->
+<section id="section-home">
+  <div class="card">
+    <h2>🎓 Welcome to Jam-Pak EDU</h2>
+    <p>A Jamaican-themed educational game for students and teachers.</p>
+    <br/>
+    <p><strong>Features:</strong></p>
+    <ul style="margin-left:1.2rem;line-height:1.9">
+      <li>🏠 Host a game with a room code</li>
+      <li>🚪 Join a friend's game</li>
+      <li>📚 Solo Study mode</li>
+      <li>🗣️ Debate mode</li>
+      <li>🧑‍🏫 Teacher &amp; Student accounts</li>
+    </ul>
+    <br/>
+    <button class="btn btn-gold" onclick="showSection('signup')">Get Started →</button>
+  </div>
+</section>
+
+<!-- SIGNUP / LOGIN -->
+<section id="section-signup" class="hidden">
+  <div class="card">
+    <h2>🔐 Sign Up</h2>
+    <div id="signup-msg"></div>
+    <label>Username</label>
+    <input id="su-username" type="text" placeholder="Choose a username" />
+    <label>Password</label>
+    <input id="su-password" type="password" placeholder="Choose a password" />
+    <label>Role</label>
+    <select id="su-role">
+      <option value="student">Student</option>
+      <option value="teacher">Teacher</option>
+    </select>
+    <button class="btn" onclick="doSignup()">Create Account</button>
+  </div>
+
+  <div class="card">
+    <h2>🔑 Login</h2>
+    <div id="login-msg"></div>
+    <label>Username</label>
+    <input id="li-username" type="text" placeholder="Username" />
+    <label>Password</label>
+    <input id="li-password" type="password" placeholder="Password" />
+    <button class="btn btn-gold" onclick="doLogin()">Log In</button>
+    <div id="logged-in-info" class="hidden" style="margin-top:.7rem"></div>
+  </div>
+</section>
+
+<!-- HOST GAME -->
+<section id="section-host" class="hidden">
+  <div class="card">
+    <h2>🏠 Host a Game</h2>
+    <div id="host-msg"></div>
+    <label>Your Username</label>
+    <input id="host-username" type="text" placeholder="Enter your username" />
+    <button class="btn" onclick="doHostGame()">Create Room</button>
+  </div>
+
+  <div id="host-room-card" class="card hidden">
+    <h2>Room Created!</h2>
+    <p>Share this code with your players:</p>
+    <div class="room-code" id="host-room-code">------</div>
+    <p style="font-size:.85rem;color:#555">Players waiting:</p>
+    <ul class="players-list" id="host-players-list"></ul>
+    <br/>
+    <button class="btn btn-gold" onclick="doStartGame()">▶ Start Game</button>
+  </div>
+
+  <div id="host-game-area" class="hidden">
+    <!-- question display for host -->
+  </div>
+</section>
+
+<!-- JOIN GAME -->
+<section id="section-join" class="hidden">
+  <div class="card">
+    <h2>🚪 Join a Game</h2>
+    <div id="join-msg"></div>
+    <label>Your Username</label>
+    <input id="join-username" type="text" placeholder="Enter your username" />
+    <label>Room Code</label>
+    <input id="join-roomcode" type="text" placeholder="e.g. A3F2C1" maxlength="6" style="text-transform:uppercase;letter-spacing:4px" />
+    <button class="btn" onclick="doJoinGame()">Join Room</button>
+  </div>
+
+  <div id="join-room-card" class="card hidden">
+    <h2 id="join-room-title">Waiting for host…</h2>
+    <p>Room: <strong id="join-room-display"></strong></p>
+    <p style="font-size:.85rem;color:#555;margin-top:.5rem">Players in room:</p>
+    <ul class="players-list" id="join-players-list"></ul>
+    <div id="join-game-area" style="margin-top:1rem"></div>
+  </div>
+</section>
+
+<!-- SOLO STUDY -->
+<section id="section-solo" class="hidden">
+  <div class="card">
+    <h2>📚 Solo Study</h2>
+    <div id="solo-msg"></div>
+    <label>Number of Questions</label>
+    <select id="solo-count">
+      <option value="3">3</option>
+      <option value="5" selected>5</option>
+      <option value="10">10 (all)</option>
+    </select>
+    <button class="btn" onclick="startSolo()">Start Study Session</button>
+  </div>
+
+  <div id="solo-quiz-area" class="hidden">
+    <div class="card">
+      <div id="progress-bar-wrap"><div id="progress-bar" style="width:0%"></div></div>
+      <p id="solo-progress" style="font-size:.85rem;color:#555"></p>
+      <br/>
+      <p id="solo-q-meta" style="font-size:.8rem"></p>
+      <h3 id="solo-q-text" style="margin:.5rem 0 1rem"></h3>
+      <div class="options-grid" id="solo-options"></div>
+      <div id="solo-feedback" class="hidden" style="margin-top:1rem">
+        <div id="solo-feedback-msg" class="msg"></div>
+        <button class="btn btn-sm" onclick="nextSoloQuestion()">Next →</button>
+      </div>
+    </div>
+    <div class="card hidden" id="solo-results">
+      <h2>🎉 Session Complete!</h2>
+      <p id="solo-final-score" style="font-size:1.3rem;margin:.5rem 0"></p>
+      <button class="btn btn-gold" onclick="startSolo()">Try Again</button>
+    </div>
+  </div>
+</section>
+
+<!-- DEBATE -->
+<section id="section-debate" class="hidden">
+  <div class="card">
+    <h2>🗣️ Debate Mode</h2>
+    <div id="debate-msg"></div>
+    <button class="btn" onclick="loadDebateTopic()">Get a Debate Topic</button>
+  </div>
+
+  <div id="debate-area" class="hidden">
+    <div class="card">
+      <h3 style="margin-bottom:.5rem">Today's Topic:</h3>
+      <div class="debate-box" id="debate-topic-text"></div>
+      <div class="side-btns">
+        <button class="side-btn for" id="side-for" onclick="chooseSide('for')">👍 FOR</button>
+        <button class="side-btn against" id="side-against" onclick="chooseSide('against')">👎 AGAINST</button>
+      </div>
+      <div id="debate-chosen" class="hidden" style="margin-top:1rem">
+        <div class="msg info" id="debate-chosen-msg"></div>
+        <p style="margin-top:.7rem;font-size:.9rem">Use the points below to build your argument:</p>
+        <div id="debate-points" style="margin-top:.5rem;line-height:1.8"></div>
+        <button class="btn btn-gold btn-sm" style="margin-top:1rem" onclick="loadDebateTopic()">New Topic</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>Jam-Pak EDU &copy; 2024 — Made with 🇯🇲 Jamaican Pride</footer>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+/* ── State ── */
+let currentUser = null;
+let currentRoom = null;
+let socket = null;
+
+// Solo study state
+let soloQuestions = [];
+let soloIndex = 0;
+let soloScore = 0;
+
+/* ── Navigation ── */
+function showSection(name) {
+  document.querySelectorAll('main section').forEach(s => s.classList.add('hidden'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('section-' + name).classList.remove('hidden');
+  document.getElementById('nav-' + name).classList.add('active');
+}
+
+/* ── Helpers ── */
+function setMsg(id, text, type = 'info') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'msg ' + type;
+  el.textContent = text;
+}
+function clearMsg(id) {
+  const el = document.getElementById(id);
+  if (el) { el.className = ''; el.textContent = ''; }
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+/* ── Signup / Login ── */
+async function doSignup() {
+  clearMsg('signup-msg');
+  const username = document.getElementById('su-username').value.trim();
+  const password = document.getElementById('su-password').value;
+  const role     = document.getElementById('su-role').value;
+  if (!username || !password) { setMsg('signup-msg', 'Fill in all fields.', 'error'); return; }
+  try {
+    const r = await api('POST', '/api/signup', { username, password, role });
+    setMsg('signup-msg', `✅ Account created! You are a ${r.role}.`, 'success');
+    currentUser = { username: r.username, role: r.role };
+  } catch (e) { setMsg('signup-msg', e.message, 'error'); }
+}
+
+async function doLogin() {
+  clearMsg('login-msg');
+  const username = document.getElementById('li-username').value.trim();
+  const password = document.getElementById('li-password').value;
+  if (!username || !password) { setMsg('login-msg', 'Fill in all fields.', 'error'); return; }
+  try {
+    const r = await api('POST', '/api/login', { username, password });
+    currentUser = { username: r.username, role: r.role };
+    setMsg('login-msg', `✅ Welcome back, ${r.username}! (${r.role})`, 'success');
+    const info = document.getElementById('logged-in-info');
+    info.classList.remove('hidden');
+    info.innerHTML = `Logged in as <strong>${r.username}</strong> <span class="tag">${r.role}</span>`;
+  } catch (e) { setMsg('login-msg', e.message, 'error'); }
+}
+
+/* ── Host Game ── */
+function connectSocket() {
+  if (!socket) socket = io();
+}
+
+async function doHostGame() {
+  clearMsg('host-msg');
+  const username = document.getElementById('host-username').value.trim();
+  if (!username) { setMsg('host-msg', 'Enter your username.', 'error'); return; }
+  currentUser = currentUser || { username };
+  try {
+    const r = await api('POST', '/api/game/host', { username });
+    currentRoom = r.roomCode;
+    document.getElementById('host-room-code').textContent = r.roomCode;
+    const li = document.createElement('li');
+    li.textContent = username + ' (host)';
+    document.getElementById('host-players-list').appendChild(li);
+    document.getElementById('host-room-card').classList.remove('hidden');
+    connectSocket();
+    socket.emit('joinRoom', { roomCode: r.roomCode, username });
+    socket.on('playerJoined', ({ username: u, players }) => {
+      const list = document.getElementById('host-players-list');
+      list.innerHTML = '';
+      players.forEach(p => {
+        const li = document.createElement('li'); li.textContent = p; list.appendChild(li);
+      });
+    });
+    socket.on('question', renderGameQuestion);
+    socket.on('scoreUpdate', renderScoreUpdate);
+    socket.on('gameOver', renderGameOver);
+  } catch (e) { setMsg('host-msg', e.message, 'error'); }
+}
+
+function doStartGame() {
+  if (!currentRoom || !socket) return;
+  socket.emit('startGame', { roomCode: currentRoom });
+  document.getElementById('host-room-card').classList.add('hidden');
+  document.getElementById('host-game-area').classList.remove('hidden');
+}
+
+/* ── Join Game ── */
+async function doJoinGame() {
+  clearMsg('join-msg');
+  const username = document.getElementById('join-username').value.trim();
+  const roomCode = document.getElementById('join-roomcode').value.trim().toUpperCase();
+  if (!username || !roomCode) { setMsg('join-msg', 'Fill in all fields.', 'error'); return; }
+  try {
+    const r = await api('POST', '/api/game/join', { username, roomCode });
+    currentRoom = r.roomCode;
+    currentUser = currentUser || { username };
+    document.getElementById('join-room-display').textContent = r.roomCode;
+    const list = document.getElementById('join-players-list');
+    list.innerHTML = '';
+    r.players.forEach(p => { const li = document.createElement('li'); li.textContent = p; list.appendChild(li); });
+    document.getElementById('join-room-card').classList.remove('hidden');
+    connectSocket();
+    socket.emit('joinRoom', { roomCode: r.roomCode, username });
+    socket.on('playerJoined', ({ players }) => {
+      const list = document.getElementById('join-players-list');
+      list.innerHTML = '';
+      players.forEach(p => { const li = document.createElement('li'); li.textContent = p; list.appendChild(li); });
+    });
+    socket.on('question', (data) => {
+      document.getElementById('join-room-title').textContent = 'Game in progress!';
+      renderGameQuestion(data, 'join-game-area');
+    });
+    socket.on('scoreUpdate', renderScoreUpdate);
+    socket.on('answerResult', handleAnswerResult);
+    socket.on('gameOver', renderGameOver);
+  } catch (e) { setMsg('join-msg', e.message, 'error'); }
+}
+
+/* ── Shared game rendering ── */
+let currentQuestion = null;
+
+function renderGameQuestion({ round, total, question }, containerId) {
+  currentQuestion = question;
+  const container = document.getElementById(containerId || 'host-game-area');
+  if (!container) return;
+  container.classList.remove('hidden');
+  container.innerHTML = `
+    <div class="card">
+      <p style="font-size:.85rem;color:#555">Question ${round} of ${total}
+        <span class="tag">${question.subject}</span></p>
+      <h3 style="margin:.5rem 0 1rem">${question.text}</h3>
+      <div class="options-grid" id="game-options"></div>
+      <div id="game-feedback" class="hidden" style="margin-top:1rem">
+        <div id="game-feedback-msg" class="msg"></div>
+        <button class="btn btn-sm" onclick="sendNextQuestion()">Next →</button>
+      </div>
+      <div id="game-scores" style="margin-top:1rem"></div>
+    </div>`;
+  question.options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.textContent = opt;
+    btn.onclick = () => sendGameAnswer(question.id, opt);
+    document.getElementById('game-options').appendChild(btn);
+  });
+}
+
+function sendGameAnswer(questionId, answer) {
+  if (!socket || !currentRoom || !currentUser) return;
+  socket.emit('submitAnswer', { roomCode: currentRoom, username: currentUser.username, questionId, answer });
+  document.querySelectorAll('#game-options .option-btn').forEach(b => b.disabled = true);
+}
+
+function handleAnswerResult({ correct, correctAnswer, explanation }) {
+  const fb = document.getElementById('game-feedback');
+  const msg = document.getElementById('game-feedback-msg');
+  if (!fb || !msg) return;
+  fb.classList.remove('hidden');
+  msg.className = 'msg ' + (correct ? 'success' : 'error');
+  msg.textContent = correct
+    ? `✅ Correct! ${explanation}`
+    : `❌ Wrong. The answer is "${correctAnswer}". ${explanation}`;
+}
+
+function renderScoreUpdate({ scores }) {
+  const el = document.getElementById('game-scores');
+  if (!el) return;
+  el.innerHTML = '<div class="score-board">' +
+    Object.entries(scores).map(([p, s]) =>
+      `<div class="player-row"><span>${p}</span><strong>${s} pts</strong></div>`
+    ).join('') + '</div>';
+}
+
+function sendNextQuestion() {
+  if (!socket || !currentRoom) return;
+  socket.emit('nextQuestion', { roomCode: currentRoom });
+}
+
+function renderGameOver({ scores }) {
+  const areas = ['host-game-area', 'join-game-area'];
+  areas.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = `<div class="card">
+      <h2>🏆 Game Over!</h2>
+      <div class="score-board">
+        ${Object.entries(scores).sort((a,b)=>b[1]-a[1]).map(([p,s],i)=>
+          `<div class="player-row"><span>${i===0?'🥇':i===1?'🥈':'🥉'} ${p}</span><strong>${s} pts</strong></div>`
+        ).join('')}
+      </div>
+      <button class="btn btn-gold" style="margin-top:1rem" onclick="showSection('home')">🏠 Home</button>
+    </div>`;
+  });
+}
+
+/* ── Solo Study ── */
+async function startSolo() {
+  clearMsg('solo-msg');
+  const count = document.getElementById('solo-count').value;
+  try {
+    const r = await api('GET', `/api/solo/questions?count=${count}`);
+    soloQuestions = r.questions;
+    soloIndex = 0;
+    soloScore = 0;
+    document.getElementById('solo-results').classList.add('hidden');
+    document.getElementById('solo-quiz-area').classList.remove('hidden');
+    renderSoloQuestion();
+  } catch (e) { setMsg('solo-msg', e.message, 'error'); }
+}
+
+function renderSoloQuestion() {
+  const q = soloQuestions[soloIndex];
+  if (!q) return;
+  const pct = Math.round((soloIndex / soloQuestions.length) * 100);
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('solo-progress').textContent = `Question ${soloIndex + 1} of ${soloQuestions.length}`;
+  document.getElementById('solo-q-meta').textContent = `${q.subject} — Grade ${q.grade}`;
+  document.getElementById('solo-q-text').textContent = q.text;
+  const opts = document.getElementById('solo-options');
+  opts.innerHTML = '';
+  q.options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.textContent = opt;
+    btn.onclick = () => checkSoloAnswer(q.id, opt, btn);
+    opts.appendChild(btn);
+  });
+  document.getElementById('solo-feedback').classList.add('hidden');
+}
+
+async function checkSoloAnswer(questionId, answer, btn) {
+  document.querySelectorAll('#solo-options .option-btn').forEach(b => b.disabled = true);
+  try {
+    const r = await api('POST', '/api/solo/answer', { questionId, answer });
+    btn.classList.add(r.correct ? 'correct' : 'wrong');
+    if (!r.correct) {
+      document.querySelectorAll('#solo-options .option-btn').forEach(b => {
+        if (b.textContent === r.correctAnswer) b.classList.add('correct');
+      });
+    }
+    if (r.correct) soloScore++;
+    const fb = document.getElementById('solo-feedback');
+    const msg = document.getElementById('solo-feedback-msg');
+    fb.classList.remove('hidden');
+    msg.className = 'msg ' + (r.correct ? 'success' : 'error');
+    msg.textContent = r.correct ? `✅ Correct! ${r.explanation}` : `❌ ${r.explanation}`;
+  } catch (e) { console.error(e); }
+}
+
+function nextSoloQuestion() {
+  soloIndex++;
+  if (soloIndex >= soloQuestions.length) {
+    document.getElementById('solo-quiz-area').classList.add('hidden');
+    document.getElementById('progress-bar').style.width = '100%';
+    const results = document.getElementById('solo-results');
+    results.classList.remove('hidden');
+    document.getElementById('solo-final-score').textContent =
+      `Your score: ${soloScore} / ${soloQuestions.length} 🎉`;
+  } else {
+    renderSoloQuestion();
+  }
+}
+
+/* ── Debate ── */
+const debatePoints = {
+  for: [
+    '📌 Builds critical thinking skills',
+    '📌 Encourages students to research both sides',
+    '📌 Improves public speaking confidence',
+    '📌 Prepares students for real-world discussions'
+  ],
+  against: [
+    '📌 Can create unnecessary conflict',
+    '📌 Students may argue positions they disagree with',
+    '📌 Not all students are comfortable speaking publicly',
+    '📌 Time could be spent on core curriculum'
+  ]
+};
+
+async function loadDebateTopic() {
+  clearMsg('debate-msg');
+  try {
+    const r = await api('GET', '/api/debate/topic');
+    document.getElementById('debate-topic-text').textContent = r.topic;
+    document.getElementById('debate-area').classList.remove('hidden');
+    document.getElementById('debate-chosen').classList.add('hidden');
+    document.getElementById('side-for').classList.remove('selected');
+    document.getElementById('side-against').classList.remove('selected');
+  } catch (e) { setMsg('debate-msg', e.message, 'error'); }
+}
+
+function chooseSide(side) {
+  document.getElementById('side-for').classList.toggle('selected', side === 'for');
+  document.getElementById('side-against').classList.toggle('selected', side === 'against');
+  const chosen = document.getElementById('debate-chosen');
+  chosen.classList.remove('hidden');
+  document.getElementById('debate-chosen-msg').textContent =
+    side === 'for' ? '👍 You are arguing FOR this topic.' : '👎 You are arguing AGAINST this topic.';
+  const points = debatePoints[side];
+  document.getElementById('debate-points').innerHTML = points.map(p => `<div>${p}</div>`).join('');
+}
+</script>
+</body>
+</html>
