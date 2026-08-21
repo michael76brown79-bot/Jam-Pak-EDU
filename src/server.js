@@ -64,7 +64,7 @@ const HIGH_SECONDARY_SCHOOL_NAMES = [
   "The Queen's School","Top Hill Secondary","Trinity Secondary","Tyall Secondary","Ultimate Achievement Academy",
   "Unity Secondary","Universal Academy","Urban High","Valiant Academy","Victoria Secondary",
   "Vineyard Town Junior High","Vision Academy","Waltham Secondary","Whitehouse Secondary","Windsor High",
-  "Woodside Secondary","Zion Academy","St Hilda?s Diocesan High School"
+  "Woodside Secondary","Zion Academy","St Hildas Diocesan High School"
 ];
 
 const PRIMARY_PREP_SCHOOL_NAMES = [
