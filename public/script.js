@@ -794,11 +794,13 @@ async function renderTeacherRegister() {
 
     status.textContent = "Creating teacher account...";
     try {
-      await api("/api/auth/teacher/register", "POST", { name, email, password, schoolId, teachingLevel });
+      const result = await api("/api/auth/teacher/register", "POST", { name, email, password, schoolId, teachingLevel });
       teacherState.prefillEmail = email;
       teacherState.pendingSchoolId = schoolId;
       teacherState.pendingTeachingLevel = teachingLevel;
-      status.textContent = "Account created. Please sign in.";
+      status.textContent = result.emailSent
+        ? "Account created. Check your email to verify your account, then sign in."
+        : "Account created. Email delivery is not configured yet; you can sign in while verification is optional.";
       setTimeout(() => renderTeacherAccess(), 500);
     } catch (error) {
       status.textContent = error.message;
@@ -1232,7 +1234,7 @@ async function renderStudentRegister() {
 
     status.textContent = "Creating student account...";
     try {
-      await api("/api/auth/student/register", "POST", {
+      const result = await api("/api/auth/student/register", "POST", {
         name,
         email,
         password,
@@ -1242,7 +1244,9 @@ async function renderStudentRegister() {
         classId: classId || null
       });
       studentState.prefillEmail = email;
-      status.textContent = "Student account created. Please sign in.";
+      status.textContent = result.emailSent
+        ? "Account created. Check your email to verify your account, then sign in."
+        : "Account created. Email delivery is not configured yet; you can sign in while verification is optional.";
       setTimeout(() => renderStudentAccess(), 500);
     } catch (error) {
       status.textContent = error.message;

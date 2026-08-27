@@ -25,6 +25,19 @@ Then open: http://localhost:3001
 4. Use the Node environment, keep the build command empty (or `npm install`), and use `npm start` as the start command.
 5. Deploy and open the generated `https://...onrender.com` URL. Do not open `public/index.html` directly for the deployed game.
 
+### Email Verification Setup
+
+To send verification emails after teacher and student registration, create a Resend account and add these Render environment variables:
+
+```text
+RESEND_API_KEY=re_your_private_key
+EMAIL_FROM=JamPak EDU <noreply@your-verified-domain.com>
+APP_BASE_URL=https://your-service.onrender.com
+REQUIRE_EMAIL_VERIFICATION=true
+```
+
+The sender domain must be verified in Resend. Keep `RESEND_API_KEY` private and never put it in frontend files or commit it to GitHub. Existing accounts remain usable; newly registered accounts must verify their email when `REQUIRE_EMAIL_VERIFICATION` is `true`.
+
 If **Root Directory** is set to `src`, the start command must instead be `node server.js`. The recommended configuration is to leave **Root Directory** blank and use `npm start`.
 
 Before deploying, open the GitHub repository's main page and confirm these items are visible at the top level:

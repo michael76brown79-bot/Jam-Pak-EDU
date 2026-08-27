@@ -17,6 +17,11 @@ const ROOM_CODE_PATTERN = /^JAM\d{5}$/;
 const QUESTION_LIMIT_DEFAULT = 15;
 const QUESTION_TIME_LIMIT_MS_DEFAULT = 15000;
 const MCQ_LABELS = ["a", "b", "c", "d"];
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
+const EMAIL_FROM = String(process.env.EMAIL_FROM || "JamPak EDU <onboarding@resend.dev>").trim();
+const APP_BASE_URL = String(process.env.APP_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
+const REQUIRE_EMAIL_VERIFICATION = String(process.env.REQUIRE_EMAIL_VERIFICATION || "false").toLowerCase() === "true";
+const EMAIL_TOKEN_TTL_MS = 1000 * 60 * 60 * 24;
 
 const HIGH_SECONDARY_SCHOOL_NAMES = [
   "Albert Town High","Allman Town Junior High","Alston High","Anchovy High","Annotto Bay High","Ardenne High",
@@ -273,6 +278,40 @@ function issueToken(payload) {
   const token = crypto.randomBytes(24).toString("hex");
   authSessions.set(token, { ...payload, expiresAt: Date.now() + TOKEN_TTL_MS });
   return token;
+}
+
+function createEmailVerification(account) {
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  account.emailVerificationTokenHash = hashSecret(rawToken);
+  account.emailVerificationExpiresAt = Date.now() + EMAIL_TOKEN_TTL_MS;
+  return rawToken;
+}
+
+async function sendVerificationEmail(account, role, rawToken) {
+  if (!RESEND_API_KEY) return false;
+  const verifyUrl = `${APP_BASE_URL}/api/auth/verify-email?role=${encodeURIComponent(role)}&id=${encodeURIComponent(account.teacherId || account.studentId)}&token=${rawToken}`;
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: EMAIL_FROM,
+      to: [account.email],
+      subject: "Verify your JamPak EDU account",
+      html: `<p>Hello ${account.name},</p><p>Thanks for joining JamPak EDU. Verify your email address to finish setting up your account.</p><p><a href="${verifyUrl}">Verify my email address</a></p><p>This link expires in 24 hours.</p>`
+    })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Email provider error: ${detail.slice(0, 300)}`);
+  }
+  return true;
+}
+
+function emailVerificationRequired(account) {
+  return REQUIRE_EMAIL_VERIFICATION && !account.emailVerifiedAt;
 }
 
 function getAuthContext(req) {
@@ -719,13 +758,16 @@ app.post("/api/auth/owner/login", (req, res) => {
   return res.json({ ok: true, role: "owner", accessToken });
 });
 
-app.post("/api/auth/teacher/register", (req, res) => {
+app.post("/api/auth/teacher/register", async (req, res) => {
   const { name, email, password, schoolId, teachingLevel } = req.body || {};
   if (!name || !email || !password || !schoolId) {
     return res.status(400).json({ error: "name, email, password and schoolId are required" });
   }
   if (String(password).length < 8) {
     return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+  if (REQUIRE_EMAIL_VERIFICATION && !RESEND_API_KEY) {
+    return res.status(503).json({ error: "Email verification is enabled but the email service is not configured." });
   }
 
   const school = findSchoolById(String(schoolId).trim());
@@ -747,11 +789,24 @@ app.post("/api/auth/teacher/register", (req, res) => {
     passwordHash: hashSecret(password),
     createdAt: Date.now()
   };
+  const verificationToken = createEmailVerification(teacher);
   accessControl.teachers.push(teacher);
   saveAccessControl(accessControl);
 
+  let emailSent = false;
+  try {
+    emailSent = await sendVerificationEmail(teacher, "teacher", verificationToken);
+  } catch (error) {
+    accessControl.teachers = accessControl.teachers.filter((item) => item.teacherId !== teacher.teacherId);
+    saveAccessControl(accessControl);
+    console.error("Teacher verification email failed:", error.message);
+    return res.status(502).json({ error: "Account could not be created because the verification email could not be sent." });
+  }
+
   return res.status(201).json({
     ok: true,
+    emailSent,
+    emailVerificationRequired: REQUIRE_EMAIL_VERIFICATION,
     teacher: { teacherId: teacher.teacherId, name: teacher.name, email: teacher.email, schoolId: teacher.schoolId, teachingLevel: teacher.teachingLevel }
   });
 });
@@ -766,6 +821,9 @@ app.post("/api/auth/teacher/login", (req, res) => {
   if (teacher.passwordHash !== hashSecret(password)) {
     return res.status(401).json({ error: "Invalid teacher credentials" });
   }
+  if (emailVerificationRequired(teacher)) {
+    return res.status(403).json({ error: "Please verify your email before signing in." });
+  }
   const accessToken = issueToken({ role: "teacher", teacherId: teacher.teacherId, teacherName: teacher.name });
   return res.json({
     ok: true,
@@ -775,13 +833,16 @@ app.post("/api/auth/teacher/login", (req, res) => {
   });
 });
 
-app.post("/api/auth/student/register", (req, res) => {
+app.post("/api/auth/student/register", async (req, res) => {
   const { name, email, password, schoolId, teacherId, classId, gradeLevel } = req.body || {};
   if (!name || !email || !password || !schoolId || !teacherId) {
     return res.status(400).json({ error: "name, email, password, schoolId and teacherId are required" });
   }
   if (String(password).length < 8) {
     return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+  if (REQUIRE_EMAIL_VERIFICATION && !RESEND_API_KEY) {
+    return res.status(503).json({ error: "Email verification is enabled but the email service is not configured." });
   }
 
   const school = findSchoolById(String(schoolId).trim());
@@ -825,6 +886,8 @@ app.post("/api/auth/student/register", (req, res) => {
     createdAt: Date.now()
   };
 
+  const verificationToken = createEmailVerification(student);
+
   accessControl.students.push(student);
 
   if (linkedClass) {
@@ -840,8 +903,23 @@ app.post("/api/auth/student/register", (req, res) => {
 
   saveAccessControl(accessControl);
 
+  let emailSent = false;
+  try {
+    emailSent = await sendVerificationEmail(student, "student", verificationToken);
+  } catch (error) {
+    accessControl.students = accessControl.students.filter((item) => item.studentId !== student.studentId);
+    if (linkedClass) {
+      linkedClass.students = linkedClass.students.filter((item) => item.studentId !== student.studentId);
+    }
+    saveAccessControl(accessControl);
+    console.error("Student verification email failed:", error.message);
+    return res.status(502).json({ error: "Account could not be created because the verification email could not be sent." });
+  }
+
   return res.status(201).json({
     ok: true,
+    emailSent,
+    emailVerificationRequired: REQUIRE_EMAIL_VERIFICATION,
     student: publicStudent(student)
   });
 });
@@ -858,6 +936,9 @@ app.post("/api/auth/student/login", (req, res) => {
   if (student.passwordHash !== hashSecret(password)) {
     return res.status(401).json({ error: "Invalid student credentials" });
   }
+  if (emailVerificationRequired(student)) {
+    return res.status(403).json({ error: "Please verify your email before signing in." });
+  }
 
   const accessToken = issueToken({ role: "student", studentId: student.studentId, studentName: student.name });
   return res.json({
@@ -866,6 +947,25 @@ app.post("/api/auth/student/login", (req, res) => {
     accessToken,
     student: publicStudent(student)
   });
+});
+
+app.get("/api/auth/verify-email", (req, res) => {
+  const role = String(req.query.role || "").trim();
+  const id = String(req.query.id || "").trim();
+  const token = String(req.query.token || "").trim();
+  const collection = role === "teacher" ? accessControl.teachers : role === "student" ? accessControl.students : null;
+  const idField = role === "teacher" ? "teacherId" : "studentId";
+  const account = collection?.find((item) => item[idField] === id);
+
+  if (!account || !token || account.emailVerificationTokenHash !== hashSecret(token) || Number(account.emailVerificationExpiresAt) < Date.now()) {
+    return res.status(400).send("This verification link is invalid or has expired.");
+  }
+
+  account.emailVerifiedAt = Date.now();
+  delete account.emailVerificationTokenHash;
+  delete account.emailVerificationExpiresAt;
+  saveAccessControl(accessControl);
+  return res.send("Email verified successfully. You can now return to JamPak EDU and sign in.");
 });
 
 app.post("/api/owner/teachers/create", (req, res) => {
