@@ -36,7 +36,7 @@ APP_BASE_URL=https://your-service.onrender.com
 REQUIRE_EMAIL_VERIFICATION=true
 ```
 
-The sender domain must be verified in Resend. Keep `RESEND_API_KEY` private and never put it in frontend files or commit it to GitHub. Set `REQUIRE_EMAIL_VERIFICATION=true` before opening registration to the public.
+The sender domain must be verified in Resend. Keep `RESEND_API_KEY` private and never put it in frontend files or commit it to GitHub. Set `REQUIRE_EMAIL_VERIFICATION=true` before opening registration to the public. The same Resend configuration sends account-verification and password-reset links. On sign-in pages, the verification resend option only appears after a login attempt says the account needs verification; password reset has its own button.
 
 ### PostgreSQL Setup (Render)
 

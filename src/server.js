@@ -159,6 +159,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: false, limit: "10kb" }));
 
 const publicDir      = path.join(__dirname, "..", "public");
 const bankFile       = path.join(__dirname, "data", "question-bank.json");
@@ -273,6 +274,7 @@ accessControl.classes.forEach((teacherClass) => {
 });
 const authSessions = new Map();
 const verificationResends = new Map();
+const passwordResetRequests = new Map();
 const localQuizResults = [];
 
 const sessions    = new Map();
@@ -326,6 +328,36 @@ async function sendVerificationEmail(account, role, rawToken) {
       to: [account.email],
       subject: "Verify your JamPak EDU account",
       html: `<p>Hello ${account.name},</p><p>Thanks for joining JamPak EDU. Verify your email address to finish setting up your account.</p><p><a href="${verifyUrl}">Verify my email address</a></p><p>This link expires in 24 hours.</p>`
+    })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Email provider error: ${detail.slice(0, 300)}`);
+  }
+  return true;
+}
+
+async function sendPasswordResetEmail(account, role, rawToken) {
+  if (!RESEND_API_KEY) return false;
+  const resetUrl = `${APP_BASE_URL}/api/auth/reset-password?role=${encodeURIComponent(role)}&id=${encodeURIComponent(account.teacherId || account.studentId)}&token=${encodeURIComponent(rawToken)}`;
+  const safeName = String(account.name || "Jam-Pak EDU user").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  })[character]);
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: EMAIL_FROM,
+      to: [account.email],
+      subject: "Reset your Jam-Pak EDU password",
+      html: `<p>Hello ${safeName},</p><p>We received a request to reset your Jam-Pak EDU password. Use the link below to choose a new password. This link expires in one hour.</p><p><a href="${resetUrl}">Reset my password</a></p><p>If you did not request this, you can ignore this email.</p>`
     })
   });
   if (!response.ok) {
@@ -1037,9 +1069,8 @@ app.post("/api/auth/resend-verification", asyncRoute(async (req, res) => {
   verificationResends.set(throttleKey, now + RESEND_COOLDOWN_MS);
 
   const accounts = role === "teacher" ? accessControl.teachers : accessControl.students;
-  const idField = role === "teacher" ? "teacherId" : "studentId";
   const account = accounts.find((item) => item.email.toLowerCase() === email);
-  if (!account || account.emailVerifiedAt) {
+  if (!account || !emailVerificationRequired(account)) {
     return res.status(202).json({ ok: true, message: "If the account needs verification, a new link will be sent." });
   }
 
@@ -1058,6 +1089,114 @@ app.post("/api/auth/resend-verification", asyncRoute(async (req, res) => {
     return res.status(502).json({ error: "Could not send the verification email. Please try again later." });
   }
   return res.status(202).json({ ok: true, message: "If the account needs verification, a new link will be sent." });
+}));
+
+app.post("/api/auth/password-reset/request", asyncRoute(async (req, res) => {
+  const role = String(req.body?.role || "").trim();
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!["teacher", "student"].includes(role) || !email || email.length > 254) {
+    return res.status(400).json({ error: "A valid account type and email are required." });
+  }
+  if (!RESEND_API_KEY) {
+    return res.status(503).json({ error: "Password reset email is not configured. Please contact the JamPak EDU administrator." });
+  }
+
+  const throttleKey = `${role}:${email}`;
+  const now = Date.now();
+  for (const [key, expiresAt] of passwordResetRequests) {
+    if (expiresAt <= now) passwordResetRequests.delete(key);
+  }
+  if ((passwordResetRequests.get(throttleKey) || 0) > now) {
+    return res.status(429).json({ error: "Please wait a minute before requesting another password reset email." });
+  }
+  passwordResetRequests.set(throttleKey, now + RESEND_COOLDOWN_MS);
+
+  const accounts = role === "teacher" ? accessControl.teachers : accessControl.students;
+  const account = accounts.find((item) => item.email.toLowerCase() === email);
+  if (!account || emailVerificationRequired(account)) {
+    return res.status(202).json({ ok: true, message: "If an eligible account exists for that email, a password reset link will be sent." });
+  }
+
+  const previousTokenHash = account.passwordResetTokenHash;
+  const previousExpiry = account.passwordResetExpiresAt;
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  account.passwordResetTokenHash = hashSecret(rawToken);
+  account.passwordResetExpiresAt = Date.now() + 60 * 60 * 1000;
+  try {
+    const sent = await sendPasswordResetEmail(account, role, rawToken);
+    if (!sent) throw new Error("Email delivery is not configured.");
+    await saveAccessControl(accessControl);
+  } catch (error) {
+    if (previousTokenHash) account.passwordResetTokenHash = previousTokenHash;
+    else delete account.passwordResetTokenHash;
+    if (previousExpiry) account.passwordResetExpiresAt = previousExpiry;
+    else delete account.passwordResetExpiresAt;
+    console.error("Password reset email failed:", error.message);
+    return res.status(502).json({ error: "Could not send a password reset email. Please try again later." });
+  }
+  return res.status(202).json({ ok: true, message: "If an eligible account exists for that email, a password reset link will be sent." });
+}));
+
+app.get("/api/auth/reset-password", (req, res) => {
+  const role = String(req.query.role || "").trim();
+  const id = String(req.query.id || "").trim();
+  const token = String(req.query.token || "").trim();
+  if (!["teacher", "student"].includes(role) || !id || !/^[a-f0-9]{64}$/i.test(token)) {
+    return res.status(400).send("This password reset link is invalid or has expired.");
+  }
+  const escapeAttribute = (value) => String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  })[character]);
+  res.type("html").send(`<!doctype html>
+    <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reset Jam-Pak EDU password</title>
+    <style>body{font:16px Arial,sans-serif;background:#101010;color:#fff;max-width:440px;margin:12vh auto;padding:24px}form{display:grid;gap:14px}input,button{font:inherit;padding:12px;border-radius:8px}button{background:#0a9a3c;color:#fff;border:0;cursor:pointer}p{line-height:1.5}</style>
+    <h1>Choose a new password</h1><p>Use at least 8 characters. This reset link can only be used once.</p>
+    <form method="post" action="/api/auth/password-reset">
+      <input type="hidden" name="role" value="${escapeAttribute(role)}">
+      <input type="hidden" name="id" value="${escapeAttribute(id)}">
+      <input type="hidden" name="token" value="${escapeAttribute(token)}">
+      <label>New password<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+      <button type="submit">Reset password</button>
+    </form></html>`);
+});
+
+app.post("/api/auth/password-reset", asyncRoute(async (req, res) => {
+  const role = String(req.body?.role || "").trim();
+  const id = String(req.body?.id || "").trim();
+  const token = String(req.body?.token || "").trim();
+  const password = String(req.body?.password || "");
+  const accounts = role === "teacher" ? accessControl.teachers : role === "student" ? accessControl.students : null;
+  const idField = role === "teacher" ? "teacherId" : "studentId";
+  const account = accounts?.find((item) => item[idField] === id);
+  if (!account || !/^[a-f0-9]{64}$/i.test(token)
+    || account.passwordResetTokenHash !== hashSecret(token)
+    || Number(account.passwordResetExpiresAt) < Date.now()) {
+    return res.status(400).send("This password reset link is invalid or has expired. Request a new one and try again.");
+  }
+  if (password.length < 8) {
+    return res.status(400).send("Your password must be at least 8 characters. Go back and try again.");
+  }
+
+  const previousPasswordHash = account.passwordHash;
+  const previousTokenHash = account.passwordResetTokenHash;
+  const previousExpiry = account.passwordResetExpiresAt;
+  account.passwordHash = hashSecret(password);
+  delete account.passwordResetTokenHash;
+  delete account.passwordResetExpiresAt;
+  try {
+    await saveAccessControl(accessControl);
+  } catch (error) {
+    account.passwordHash = previousPasswordHash;
+    account.passwordResetTokenHash = previousTokenHash;
+    account.passwordResetExpiresAt = previousExpiry;
+    throw error;
+  }
+  return res.send("Your password has been reset. You can now return to Jam-Pak EDU and sign in.");
 }));
 
 app.get("/api/auth/verify-email", asyncRoute(async (req, res) => {

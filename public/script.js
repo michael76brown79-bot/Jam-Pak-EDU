@@ -479,6 +479,7 @@ async function api(url, method, body, accessToken) {
 
 function wireVerificationResend(role, emailInputId, statusId) {
   const button = document.getElementById(`${role}ResendVerificationBtn`);
+  button.classList.add("hidden");
   button.onclick = async () => {
     const email = document.getElementById(emailInputId).value.trim();
     const status = document.getElementById(statusId);
@@ -487,9 +488,31 @@ function wireVerificationResend(role, emailInputId, statusId) {
       return;
     }
     button.disabled = true;
-    status.textContent = "Requesting a new verification email...";
+    status.textContent = "Sending an account verification email...";
     try {
       const result = await api("/api/auth/resend-verification", "POST", { role, email });
+      status.textContent = result.message;
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+function wirePasswordResetRequest(role, emailInputId, statusId) {
+  const button = document.getElementById(`${role}ForgotPasswordBtn`);
+  button.onclick = async () => {
+    const email = document.getElementById(emailInputId).value.trim();
+    const status = document.getElementById(statusId);
+    if (!email) {
+      status.textContent = "Enter your email address first.";
+      return;
+    }
+    button.disabled = true;
+    status.textContent = "Requesting a password reset link...";
+    try {
+      const result = await api("/api/auth/password-reset/request", "POST", { role, email });
       status.textContent = result.message;
     } catch (error) {
       status.textContent = error.message;
@@ -768,7 +791,8 @@ function renderTeacherAccess() {
           <label class="field-label" for="teacherPassword">Teacher Password</label>
           <input type="password" id="teacherPassword" placeholder="Teacher password"/>
           <button class="btn-primary btn-gold" id="teacherLoginBtn">Sign In</button>
-          <button class="btn-back btn-inline" id="teacherResendVerificationBtn">Resend verification email</button>
+          <button class="btn-back btn-inline" id="teacherForgotPasswordBtn">Forgot password? Send reset link</button>
+          <button class="btn-back btn-inline hidden" id="teacherResendVerificationBtn">Resend account verification email</button>
           <button class="btn-back btn-inline" id="teacherCreateBtn">Create Teacher Account</button>
           <p class="status-note" id="teacherStatus"></p>
         </div>
@@ -779,6 +803,7 @@ function renderTeacherAccess() {
   document.getElementById("teacherBackBtn").onclick = renderHome;
   document.getElementById("teacherCreateBtn").onclick = () => renderTeacherRegister();
   wireVerificationResend("teacher", "teacherEmail", "teacherStatus");
+  wirePasswordResetRequest("teacher", "teacherEmail", "teacherStatus");
   document.getElementById("teacherLoginBtn").onclick = async () => {
     const email = document.getElementById("teacherEmail").value.trim();
     const password = document.getElementById("teacherPassword").value.trim();
@@ -797,6 +822,9 @@ function renderTeacherAccess() {
       renderTeacherPortal();
     } catch (error) {
       status.textContent = error.message;
+      if (/verify your email/i.test(error.message)) {
+        document.getElementById("teacherResendVerificationBtn").classList.remove("hidden");
+      }
     }
   };
 }
@@ -928,7 +956,8 @@ function renderStudentAccess() {
           <label class="field-label" for="studentPassword">Student Password</label>
           <input type="password" id="studentPassword" placeholder="Student password"/>
           <button class="btn-primary btn-gold" id="studentLoginBtn">Sign In</button>
-          <button class="btn-back btn-inline" id="studentResendVerificationBtn">Resend verification email</button>
+          <button class="btn-back btn-inline" id="studentForgotPasswordBtn">Forgot password? Send reset link</button>
+          <button class="btn-back btn-inline hidden" id="studentResendVerificationBtn">Resend account verification email</button>
           <button class="btn-back btn-inline" id="studentCreateBtn">Create Student Account</button>
           <p class="status-note" id="studentStatus"></p>
         </div>
@@ -939,6 +968,7 @@ function renderStudentAccess() {
   document.getElementById("studentBackBtn").onclick = renderHome;
   document.getElementById("studentCreateBtn").onclick = () => renderStudentRegister();
   wireVerificationResend("student", "studentEmail", "studentStatus");
+  wirePasswordResetRequest("student", "studentEmail", "studentStatus");
   document.getElementById("studentLoginBtn").onclick = async () => {
     const email = document.getElementById("studentEmail").value.trim();
     const password = document.getElementById("studentPassword").value.trim();
@@ -959,6 +989,9 @@ function renderStudentAccess() {
       renderStudentDashboard();
     } catch (error) {
       status.textContent = error.message;
+      if (/verify your email/i.test(error.message)) {
+        document.getElementById("studentResendVerificationBtn").classList.remove("hidden");
+      }
     }
   };
 }
