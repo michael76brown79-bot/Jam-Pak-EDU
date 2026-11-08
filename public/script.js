@@ -287,7 +287,6 @@ function footerHTML() {
     <footer class="footer">
       <div>&copy; 2025-2026 <span class="brand-name">Jam-Pak EDU</span> <span class="sep">|</span> All Rights Reserved</div>
       <div class="footer-credit">Built by <span class="creator">Shantaye Williams</span></div>
-      <div class="footer-vision">My hope is for Jam-Pak EDU to grow into a Jamaican learning company listed on the Jamaica Stock Exchange.</div>
     </footer>`;
 }
 

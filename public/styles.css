@@ -1333,13 +1333,6 @@ input.code-input {
 
 .footer > div + div { margin-top: 5px; }
 .footer-credit { color: rgba(255,255,255,0.64); }
-.footer-vision {
-  max-width: 720px;
-  margin-right: auto;
-  margin-left: auto;
-  color: rgba(255,255,255,0.48);
-  font-size: 0.76rem;
-}
 
 .selected-pack-label {
   text-align: center;
