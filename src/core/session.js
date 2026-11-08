@@ -14,4 +14,8 @@ function createRoomCode() {
   return `JAM${suffix}`;
 }
 
-module.exports = { createSession, createRoomCode };
+function shouldShowLeaderboard(session) {
+  return session.showLeaderboard !== false;
+}
+
+module.exports = { createSession, createRoomCode, shouldShowLeaderboard };

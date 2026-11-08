@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const express = require("express");
 
 const { questions: seedQuestions } = require("./data/questions");
-const { createSession, createRoomCode } = require("./core/session");
+const { createSession, createRoomCode, shouldShowLeaderboard } = require("./core/session");
 const { getNextQuestion } = require("./core/quizEngine");
 const database = require("./core/database");
 
@@ -383,6 +383,10 @@ function leaderboardFor(session) {
 
 async function persistSessionResults(session) {
   if (session.resultsPersisted) return;
+  if (session.mode === "teacher_host") {
+    session.resultsPersisted = true;
+    return;
+  }
   const results = (session.players || [])
     .filter((player) => player.questionsAnswered > 0)
     .map((player) => ({
@@ -1214,6 +1218,7 @@ app.post("/api/teacher/quizzes/create", asyncRoute(async (req, res) => {
     classId, title, gradeBand, subject,
     revealAnswersImmediately = true,
     requireManualReviewForShortAnswers = false,
+    showLeaderboard = true,
     questionLimit,
     questionTimeSeconds,
     waitForAllPlayers = true
@@ -1244,6 +1249,7 @@ app.post("/api/teacher/quizzes/create", asyncRoute(async (req, res) => {
     settings: {
       revealAnswersImmediately: Boolean(revealAnswersImmediately),
       requireManualReviewForShortAnswers: Boolean(requireManualReviewForShortAnswers),
+      showLeaderboard: Boolean(showLeaderboard),
       questionLimit: finalQuestionLimit,
       questionTimeLimitMs: finalQuestionTimeSeconds * 1000,
       waitForAllPlayers: Boolean(waitForAllPlayers)
@@ -1372,6 +1378,7 @@ app.post("/api/teacher/quizzes/:quizId/start", (req, res) => {
   session.hostPlayerId = hostPlayer.playerId;
   session.revealAnswersImmediately = quiz.settings.revealAnswersImmediately;
   session.requireManualReviewForShortAnswers = quiz.settings.requireManualReviewForShortAnswers;
+  session.showLeaderboard = quiz.settings.showLeaderboard !== false;
   session.questionLimit = Number(quiz.settings.questionLimit || QUESTION_LIMIT_DEFAULT);
   session.questionTimeLimitMs = Number(quiz.settings.questionTimeLimitMs || QUESTION_TIME_LIMIT_MS_DEFAULT);
   session.waitForAllPlayers = quiz.settings.waitForAllPlayers !== false;
@@ -1625,6 +1632,7 @@ app.post("/api/session/create", (req, res) => {
   session.started = false;
   session.hostPlayerId = hostPlayer ? hostPlayer.playerId : null;
   session.revealAnswersImmediately = true;
+  session.showLeaderboard = true;
   session.requireManualReviewForShortAnswers = false;
   session.questionLimit = QUESTION_LIMIT_DEFAULT;
   session.questionTimeLimitMs = QUESTION_TIME_LIMIT_MS_DEFAULT;
@@ -1737,6 +1745,13 @@ app.get("/api/leaderboard", asyncRoute(async (req, res) => {
 app.get("/api/session/:sessionId/next-question", asyncRoute(async (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: "Session not found" });
+  const completedSession = () => ({
+    done: true,
+    message: "No more questions for this session.",
+    showLeaderboard: shouldShowLeaderboard(session),
+    showGlobalLeaderboard: session.mode !== "teacher_host",
+    leaderboard: shouldShowLeaderboard(session) ? leaderboardFor(session) : []
+  });
 
   const playerId = String(req.query.playerId || "").trim() || null;
   const multiplayer = isMultiplayerSession(session);
@@ -1749,7 +1764,7 @@ app.get("/api/session/:sessionId/next-question", asyncRoute(async (req, res) => 
       const round = createRoundForSession(session, questionBank);
       if (!round) {
         await persistSessionResults(session);
-        return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
+        return res.json(completedSession());
       }
     }
 
@@ -1762,7 +1777,7 @@ app.get("/api/session/:sessionId/next-question", asyncRoute(async (req, res) => 
       const nextRound = createRoundForSession(session, questionBank);
       if (!nextRound) {
         await persistSessionResults(session);
-        return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
+        return res.json(completedSession());
       }
       const nextProgress = roundProgress(session);
       return res.json({
@@ -1806,13 +1821,13 @@ app.get("/api/session/:sessionId/next-question", asyncRoute(async (req, res) => 
   if ((session.askedQuestionIds || []).length >= limit) {
     session.currentRound = null;
     await persistSessionResults(session);
-    return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
+    return res.json(completedSession());
   }
 
   const q = getNextQuestion(session, questionBank.filter((question) => question.reviewStatus === "approved"));
   if (!q) {
     await persistSessionResults(session);
-    return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
+    return res.json(completedSession());
   }
 
   const roundQuestion = buildRoundQuestion(q);

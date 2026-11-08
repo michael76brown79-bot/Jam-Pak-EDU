@@ -609,7 +609,6 @@ function renderHome() {
         </div>
         <div class="selected-pack-label">Selected Pack <strong id="selectedPackValue">None</strong></div>
         <div class="home-tools">
-          <button class="btn-back" id="leaderboardBtn">Leaderboard</button>
           <button class="btn-back" id="teacherPortalBtn">${teacherState.accessToken ? "Teacher Portal" : "Teacher Sign In"}</button>
           <button class="btn-back" id="studentPortalBtn">${studentState.accessToken ? "Student Portal" : "Student Sign In"}</button>
         </div>
@@ -621,7 +620,6 @@ function renderHome() {
   document.getElementById("card-join").onclick = renderJoin;
   document.getElementById("card-solo").onclick = () => renderSolo(1);
   document.getElementById("card-debate").onclick = renderDebate;
-  document.getElementById("leaderboardBtn").onclick = renderGlobalLeaderboard;
   document.getElementById("teacherPortalBtn").onclick = () => {
     if (teacherState.accessToken) {
       renderTeacherPortal();
@@ -1626,6 +1624,7 @@ async function renderTeacherPortal() {
             <input type="number" id="tpQuestionTime" min="5" max="180" value="20"/>
             <label class="toggle-row"><input type="checkbox" id="tpWaitAllToggle" checked/> Wait for all players (or timer) before next question</label>
             <label class="toggle-row"><input type="checkbox" id="tpRevealToggle" checked/> Reveal correct answer immediately</label>
+            <label class="toggle-row"><input type="checkbox" id="tpShowLeaderboardToggle" checked/> Show player leaderboard when the quiz ends</label>
             <label class="toggle-row"><input type="checkbox" id="tpManualToggle"/> Manual review for short answers</label>
             <button class="btn-primary btn-gold" id="tpCreateQuizBtn">Create Quiz</button>
             <p class="status-note" id="tpQuizStatus"></p>
@@ -1898,6 +1897,7 @@ async function renderTeacherPortal() {
     const questionTimeSeconds = Number(document.getElementById("tpQuestionTime").value);
     const waitForAllPlayers = document.getElementById("tpWaitAllToggle").checked;
     const revealAnswersImmediately = document.getElementById("tpRevealToggle").checked;
+    const showLeaderboard = document.getElementById("tpShowLeaderboardToggle").checked;
     const requireManualReviewForShortAnswers = document.getElementById("tpManualToggle").checked;
     const status = document.getElementById("tpQuizStatus");
     if (!classId || !title) { status.textContent = "Choose class and enter quiz title."; return; }
@@ -1912,6 +1912,7 @@ async function renderTeacherPortal() {
         questionTimeSeconds,
         waitForAllPlayers,
         revealAnswersImmediately,
+        showLeaderboard,
         requireManualReviewForShortAnswers
       }, teacherState.accessToken);
       status.textContent = "Quiz created!";
@@ -3161,18 +3162,23 @@ async function loadNextQuestion() {
     if (data.done) {
       status.textContent = "Session complete.";
       prompt.textContent = "No more questions in this session.";
-      const leaderboardData = Array.isArray(data.leaderboard) ? data.leaderboard : [];
+      const shouldShowLeaderboard = data.showLeaderboard !== false;
+      const leaderboardData = shouldShowLeaderboard && Array.isArray(data.leaderboard) ? data.leaderboard : [];
       const leaderboardMarkup = renderLeaderboardMarkup(leaderboardData);
+      const globalLeaderboardButton = data.showGlobalLeaderboard === false
+        ? ""
+        : `<button class="btn-back" id="globalLeaderboardFromComplete">View Global Leaderboard</button>`;
       optionsWrap.innerHTML = `
         <div class="quiz-complete">
           <p>Your final score is ${gameState.score} points over ${gameState.answered} questions.</p>
           ${leaderboardMarkup}
-          <button class="btn-back" id="globalLeaderboardFromComplete">View Global Leaderboard</button>
+          ${globalLeaderboardButton}
           <button class="btn-primary btn-gold" id="homeFromComplete">Back to Home</button>
         </div>`;
       const backHome = document.getElementById("homeFromComplete");
       if (backHome) backHome.onclick = renderHome;
-      document.getElementById("globalLeaderboardFromComplete").onclick = renderGlobalLeaderboard;
+      const globalLeaderboardLink = document.getElementById("globalLeaderboardFromComplete");
+      if (globalLeaderboardLink) globalLeaderboardLink.onclick = renderGlobalLeaderboard;
       return;
     }
 
