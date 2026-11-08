@@ -2,11 +2,14 @@
   return String(value || "").trim().toLowerCase();
 }
 
-function matchesChosenTopic(question, selectedValue) {
+function matchesChosenTopic(question, selectedValue, selectedSubject) {
   const chosen = normalize(selectedValue);
   const subject = normalize(question.subject);
   const category = normalize(question.category);
-  return subject === chosen || category === chosen;
+  if (subject !== normalize(selectedSubject)) return false;
+  return chosen === normalize(selectedSubject)
+    ? subject === chosen || category === chosen
+    : category === chosen;
 }
 
 function matchesChosenGrade(questionGrade, selectedGrade) {
@@ -19,34 +22,21 @@ function getEligibleQuestions(session, allQuestions) {
   const { gradeBand, subject, category } = session.filters;
   const unanswered = allQuestions.filter((q) => !session.askedQuestionIds.includes(q.id));
 
-  // Prefer questions that match both grade and subject exactly.
+  // Never borrow questions from another grade, subject, or selected topic.
   const exactInBank = allQuestions.filter((q) =>
     matchesChosenGrade(q.gradeBand, gradeBand) &&
-    matchesChosenTopic(q, category || subject)
+    matchesChosenTopic(q, category || subject, subject)
   );
   const exactUnanswered = unanswered.filter((q) =>
     matchesChosenGrade(q.gradeBand, gradeBand) &&
-    matchesChosenTopic(q, category || subject)
+    matchesChosenTopic(q, category || subject, subject)
   );
 
   if (exactInBank.length > 0) {
     return exactUnanswered;
   }
 
-  // A topic-specific study session must never substitute unrelated questions.
-  if (category && normalize(category) !== normalize(subject)) {
-    return [];
-  }
-
-  // Fallback 1: same grade, any subject (e.g. subject not yet in bank for this grade)
-  const gradeOnly = unanswered.filter((q) => matchesChosenGrade(q.gradeBand, gradeBand));
-  if (gradeOnly.length) return gradeOnly;
-
-  // Fallback 2: same subject, any grade (avoids a completely empty session)
-  const subjectOnly = unanswered.filter((q) => matchesChosenTopic(q, category || subject));
-  if (subjectOnly.length) return subjectOnly;
-
-  return unanswered;
+  return [];
 }
 
 function getNextQuestion(session, allQuestions) {

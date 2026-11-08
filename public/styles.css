@@ -1233,10 +1233,19 @@ input.code-input {
   box-shadow: 0 0 14px rgba(255,215,0,0.18);
 }
 
+.leader-row.rank-1 {
+  border-color: rgba(255,215,0,0.85);
+  background: linear-gradient(110deg, rgba(255,215,0,0.16), rgba(255,255,255,0.03));
+}
+
+.leader-row.rank-2 { border-color: rgba(210,220,230,0.62); }
+.leader-row.rank-3 { border-color: rgba(198,132,89,0.65); }
+
 .leader-left {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .leader-rank {
@@ -1253,6 +1262,28 @@ input.code-input {
 .leader-score {
   font-size: 1.1rem;
   color: var(--green-bright);
+  white-space: nowrap;
+}
+
+.leader-detail {
+  color: rgba(255,255,255,0.58);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.leaderboard-panel {
+  width: 100%;
+}
+
+.leaderboard-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin: 14px 0;
+}
+
+.leaderboard-filters .field-label {
+  margin: 0;
 }
 
 /* ── Countdown overlay ─────────────────────────────────────── */
@@ -1300,6 +1331,16 @@ input.code-input {
   letter-spacing: 0.3px;
 }
 
+.footer > div + div { margin-top: 5px; }
+.footer-credit { color: rgba(255,255,255,0.64); }
+.footer-vision {
+  max-width: 720px;
+  margin-right: auto;
+  margin-left: auto;
+  color: rgba(255,255,255,0.48);
+  font-size: 0.76rem;
+}
+
 .selected-pack-label {
   text-align: center;
   font-size: 0.8rem;
@@ -1321,6 +1362,8 @@ input.code-input {
 .home-tools {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 10px;
 }
 

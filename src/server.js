@@ -6,9 +6,13 @@ const express = require("express");
 const { questions: seedQuestions } = require("./data/questions");
 const { createSession, createRoomCode } = require("./core/session");
 const { getNextQuestion } = require("./core/quizEngine");
+const database = require("./core/database");
 
 const app  = express();
 const PORT = Number(process.env.PORT) || 3001;
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
 const SCORE_CORRECT = 15;
 const SCORE_INCORRECT = -5;
 const OWNER_ACCESS_CODE = String(process.env.OWNER_ACCESS_CODE || "").trim();
@@ -22,6 +26,7 @@ const EMAIL_FROM = String(process.env.EMAIL_FROM || "JamPak EDU <onboarding@rese
 const APP_BASE_URL = String(process.env.APP_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 const REQUIRE_EMAIL_VERIFICATION = String(process.env.REQUIRE_EMAIL_VERIFICATION || "false").toLowerCase() === "true";
 const EMAIL_TOKEN_TTL_MS = 1000 * 60 * 60 * 24;
+const RESEND_COOLDOWN_MS = 60 * 1000;
 
 const HIGH_SECONDARY_SCHOOL_NAMES = [
   "Albert Town High","Allman Town Junior High","Alston High","Anchovy High","Annotto Bay High","Ardenne High",
@@ -169,14 +174,17 @@ function loadBank() {
       const saved = JSON.parse(fs.readFileSync(bankFile, "utf8"));
       if (Array.isArray(saved) && saved.length) {
         console.log(`Loaded ${saved.length} questions from disk.`);
-        return saved;
+        return saved.map((question) => ({
+          ...question,
+          reviewStatus: question.reviewStatus || "approved"
+        }));
       }
     } catch (e) {
       console.warn("Could not parse question-bank.json, using seed.", e.message);
     }
   }
   console.log(`Using ${seedQuestions.length} seed questions.`);
-  return [...seedQuestions];
+  return seedQuestions.map((question) => ({ ...question, reviewStatus: "approved" }));
 }
 
 function saveBank(bank) {
@@ -252,16 +260,21 @@ accessControl.classes.forEach((teacherClass) => {
 });
 saveAccessControl(accessControl);
 const authSessions = new Map();
+const verificationResends = new Map();
+const localQuizResults = [];
 
 const sessions    = new Map();
 const roomToSession = new Map();
 
 function createPlayer({ name, avatarId }) {
+  const nickname = String(name || "").trim().replace(/\s+/g, " ").slice(0, 24) || "Player";
   return {
     playerId: `p_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
-    name: String(name || "Player").trim(),
+    name: nickname,
     avatarId: String(avatarId || "pulse").trim(),
     score: 0,
+    questionsAnswered: 0,
+    correctAnswers: 0,
     joinedAt: Date.now()
   };
 }
@@ -356,6 +369,46 @@ function leaderboardFor(session) {
     }));
 }
 
+async function persistSessionResults(session) {
+  if (session.resultsPersisted) return;
+  const results = (session.players || [])
+    .filter((player) => player.questionsAnswered > 0)
+    .map((player) => ({
+      sessionId: session.sessionId,
+      playerId: player.playerId,
+      nickname: player.name,
+      gradeBand: String(session.filters.gradeBand),
+      subject: String(session.filters.subject),
+      score: player.score,
+      questionsAnswered: player.questionsAnswered,
+      correctAnswers: player.correctAnswers
+    }));
+
+  if (database.isConfigured()) {
+    await database.recordResults(results);
+  } else {
+    for (const result of results) {
+      if (!localQuizResults.some((existing) => existing.sessionId === result.sessionId && existing.playerId === result.playerId)) {
+        localQuizResults.push({ ...result, completedAt: new Date() });
+      }
+    }
+  }
+  session.resultsPersisted = true;
+}
+
+function publicLeaderboard(results) {
+  return results.map((result, index) => ({
+    rank: index + 1,
+    nickname: result.nickname,
+    gradeBand: result.gradeBand,
+    subject: result.subject,
+    score: result.score,
+    questionsAnswered: result.questionsAnswered,
+    correctAnswers: result.correctAnswers,
+    completedAt: result.completedAt
+  }));
+}
+
 function normalizeQuestion(q, i) {
   const type = (q.type || "mcq").toLowerCase();
   return {
@@ -370,7 +423,12 @@ function normalizeQuestion(q, i) {
     correctOptionId: q.correctOptionId || null,
     correctBoolean:  typeof q.correctBoolean === "boolean" ? q.correctBoolean : null,
     acceptableAnswers: Array.isArray(q.acceptableAnswers) ? q.acceptableAnswers : [],
-    explanation:     q.explanation || ""
+    explanation:     q.explanation || "",
+    reviewStatus:    q.reviewStatus || "pending",
+    reviewNote:      q.reviewNote || "",
+    authorRole:      q.authorRole || null,
+    authorTeacherId: q.authorTeacherId || null,
+    sourceReference: q.sourceReference || null
   };
 }
 
@@ -632,7 +690,7 @@ function createRoundForSession(session, bank) {
   const limit = Number(session.questionLimit || QUESTION_LIMIT_DEFAULT);
   if ((session.askedQuestionIds || []).length >= limit) return null;
 
-  const question = getNextQuestion(session, bank);
+  const question = getNextQuestion(session, bank.filter((item) => item.reviewStatus === "approved"));
   if (!question) return null;
 
   const round = buildRoundQuestion(question);
@@ -947,6 +1005,50 @@ app.post("/api/auth/student/login", (req, res) => {
     accessToken,
     student: publicStudent(student)
   });
+});
+
+app.post("/api/auth/resend-verification", async (req, res) => {
+  const role = String(req.body?.role || "").trim();
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!["teacher", "student"].includes(role) || !email || email.length > 254) {
+    return res.status(400).json({ error: "A valid account type and email are required." });
+  }
+  if (!RESEND_API_KEY) {
+    return res.status(503).json({ error: "Email delivery is not configured. Please contact the JamPak EDU administrator." });
+  }
+
+  const throttleKey = `${role}:${email}`;
+  const now = Date.now();
+  for (const [key, expiresAt] of verificationResends) {
+    if (expiresAt <= now) verificationResends.delete(key);
+  }
+  if ((verificationResends.get(throttleKey) || 0) > now) {
+    return res.status(429).json({ error: "Please wait a minute before requesting another verification email." });
+  }
+  verificationResends.set(throttleKey, now + RESEND_COOLDOWN_MS);
+
+  const accounts = role === "teacher" ? accessControl.teachers : accessControl.students;
+  const idField = role === "teacher" ? "teacherId" : "studentId";
+  const account = accounts.find((item) => item.email.toLowerCase() === email);
+  if (!account || account.emailVerifiedAt) {
+    return res.status(202).json({ ok: true, message: "If the account needs verification, a new link will be sent." });
+  }
+
+  const previousTokenHash = account.emailVerificationTokenHash;
+  const previousExpiry = account.emailVerificationExpiresAt;
+  const verificationToken = createEmailVerification(account);
+  try {
+    await sendVerificationEmail(account, role, verificationToken);
+    saveAccessControl(accessControl);
+  } catch (error) {
+    if (previousTokenHash) account.emailVerificationTokenHash = previousTokenHash;
+    else delete account.emailVerificationTokenHash;
+    if (previousExpiry) account.emailVerificationExpiresAt = previousExpiry;
+    else delete account.emailVerificationExpiresAt;
+    console.error("Verification resend failed:", error.message);
+    return res.status(502).json({ error: "Could not send the verification email. Please try again later." });
+  }
+  return res.status(202).json({ ok: true, message: "If the account needs verification, a new link will be sent." });
 });
 
 app.get("/api/auth/verify-email", (req, res) => {
@@ -1316,20 +1418,129 @@ app.post("/api/teacher/reviews/:reviewId/grade", (req, res) => {
   return res.json({ ok: true, review });
 });
 
-// -- Browse questions (for debugging) ------------------------
+// -- Browse approved question prompts (never expose answer keys publicly) -
 app.get("/api/questions", (req, res) => {
   const { gradeBand, subject } = req.query;
-  let list = questionBank;
+  let list = questionBank.filter((question) => question.reviewStatus === "approved");
   if (gradeBand) list = list.filter(q => q.gradeBand === gradeBand);
   if (subject)   list = list.filter(q =>
     q.subject.toLowerCase()  === subject.toLowerCase() ||
     q.category.toLowerCase() === subject.toLowerCase()
   );
-  res.json({ total: list.length, questions: list });
+  const questions = list.map((question) => ({
+    id: question.id,
+    gradeBand: question.gradeBand,
+    subject: question.subject,
+    category: question.category,
+    difficulty: question.difficulty,
+    type: question.type,
+    prompt: question.prompt,
+    options: question.options,
+    explanation: question.explanation
+  }));
+  res.json({ total: questions.length, questions });
 });
 
-// -- Import questions (saves to disk) ------------------------
-app.post("/api/questions/import", (req, res) => {
+app.get("/api/questions/topics", (req, res) => {
+  const gradeBand = String(req.query.gradeBand || "").trim();
+  const subject = String(req.query.subject || "").trim();
+  if (!/^(?:[1-9]|1[01])$/.test(gradeBand) || !subject || subject.length > 60) {
+    return res.status(400).json({ error: "A grade from 1 to 11 and a valid subject are required." });
+  }
+  const counts = new Map();
+  questionBank
+    .filter((question) => question.reviewStatus === "approved"
+      && String(question.gradeBand) === gradeBand
+      && String(question.subject).toLowerCase() === subject.toLowerCase())
+    .forEach((question) => {
+      const topic = String(question.category || subject).trim();
+      counts.set(topic, (counts.get(topic) || 0) + 1);
+    });
+  return res.json({
+    topics: [...counts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count }))
+  });
+});
+
+app.get("/api/questions/review", asyncRoute(async (req, res) => {
+  const auth = requireRole(req, res, ["owner", "teacher"]);
+  if (!auth) return;
+  const limit = Number(req.query.limit || 30);
+  const offset = Number(req.query.offset || 0);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isInteger(offset) || offset < 0) {
+    return res.status(400).json({ error: "Review pagination must use a limit from 1 to 50 and a non-negative offset." });
+  }
+  const pending = database.isConfigured()
+    ? await database.listQuestionsByStatus("pending", { limit, offset })
+    : (() => {
+        const all = questionBank.filter((question) => question.reviewStatus === "pending");
+        return { questions: all.slice(offset, offset + limit), total: all.length };
+      })();
+  return res.json({
+    questions: pending.questions,
+    total: pending.total,
+    nextOffset: offset + pending.questions.length
+  });
+}));
+
+app.patch("/api/questions/:questionId/review", asyncRoute(async (req, res) => {
+  const auth = requireRole(req, res, ["owner", "teacher"]);
+  if (!auth) return;
+  const reviewStatus = String(req.body?.reviewStatus || "");
+  if (!["approved", "rejected"].includes(reviewStatus)) {
+    return res.status(400).json({ error: "reviewStatus must be approved or rejected." });
+  }
+  const question = questionBank.find((item) => item.id === req.params.questionId);
+  if (!question) return res.status(404).json({ error: "Question not found." });
+
+  const gradeBand = String(req.body?.gradeBand || question.gradeBand).trim();
+  const subject = String(req.body?.subject || question.subject).trim();
+  const category = String(req.body?.category || question.category || subject).trim();
+  const explanation = typeof req.body?.explanation === "string"
+    ? req.body.explanation.trim()
+    : String(question.explanation || "").trim();
+  if (!/^(?:[1-9]|1[01])$/.test(gradeBand) || !subject || !category) {
+    return res.status(400).json({ error: "Choose an individual grade, subject, and topic before reviewing." });
+  }
+  if (reviewStatus === "approved" && explanation.length < 10) {
+    return res.status(400).json({ error: "Add a clear explanation of at least 10 characters before approving." });
+  }
+  if (reviewStatus === "approved" && question.type === "mcq"
+    && (!Array.isArray(question.options) || question.options.length < 2
+      || !question.options.some((option) => option.id === question.correctOptionId))) {
+    return res.status(400).json({ error: "Add at least two answer choices and a valid correct choice before approving." });
+  }
+  if (reviewStatus === "approved" && question.type === "true_false"
+    && typeof question.correctBoolean !== "boolean") {
+    return res.status(400).json({ error: "Set the correct true/false answer before approving." });
+  }
+  if (reviewStatus === "approved" && question.type === "short_answer"
+    && (!Array.isArray(question.acceptableAnswers) || !question.acceptableAnswers.some((answer) => String(answer).trim()))) {
+    return res.status(400).json({ error: "Add at least one accepted answer before approving." });
+  }
+  if (database.isConfigured()) {
+    const updated = await database.updateQuestionReview(question.id, {
+      reviewStatus,
+      explanation,
+      gradeBand,
+      subject,
+      category
+    });
+    if (!updated) return res.status(404).json({ error: "Question not found in the database." });
+  }
+  question.gradeBand = gradeBand;
+  question.subject = subject;
+  question.category = category;
+  question.explanation = explanation;
+  question.reviewStatus = reviewStatus;
+  question.reviewNote = "";
+  saveBank(questionBank);
+  return res.json({ ok: true, questionId: question.id, reviewStatus });
+}));
+
+// -- Import questions (saves to database and local backup) ----
+app.post("/api/questions/import", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["owner", "teacher"]);
   if (!auth) return;
   const incoming = req.body?.questions;
@@ -1340,6 +1551,22 @@ app.post("/api/questions/import", (req, res) => {
   const normalized = incoming.map((q, i) => normalizeQuestion(q, i));
   normalized.forEach((q) => {
     q.authorRole = auth.role;
+    const normalizedPrompt = String(q.prompt).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const crossGradeDuplicate = questionBank.concat(normalized.filter((other) => other !== q)).some((existing) =>
+      String(existing.subject).toLowerCase() === String(q.subject).toLowerCase()
+      && String(existing.gradeBand) !== String(q.gradeBand)
+      && String(existing.prompt).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === normalizedPrompt
+    );
+    const reviewNotes = [];
+    if (auth.role === "teacher") reviewNotes.push("Submitted by a teacher; approval is required.");
+    if (crossGradeDuplicate) reviewNotes.push("This prompt appears in another grade; confirm the correct grade.");
+    if (String(q.explanation || "").trim().length < 10) reviewNotes.push("Add a clear explanation for students.");
+    q.reviewNote = reviewNotes.join(" ");
+    q.reviewStatus = auth.role === "owner"
+      && String(q.explanation || "").trim().length >= 10
+      && !crossGradeDuplicate
+      ? "approved"
+      : "pending";
     if (auth.role === "teacher") q.authorTeacherId = auth.teacherId;
   });
 
@@ -1347,18 +1574,30 @@ app.post("/api/questions/import", (req, res) => {
   const existingIds = new Set(questionBank.map(q => q.id));
   const fresh = normalized.filter(q => !existingIds.has(q.id));
 
+  if (database.isConfigured()) await database.insertQuestions(fresh);
   questionBank = questionBank.concat(fresh);
   saveBank(questionBank);
 
-  return res.json({ ok: true, imported: fresh.length, duplicatesSkipped: normalized.length - fresh.length, total: questionBank.length });
-});
+  return res.json({
+    ok: true,
+    imported: fresh.length,
+    pendingReview: fresh.filter((question) => question.reviewStatus === "pending").length,
+    duplicatesSkipped: normalized.length - fresh.length,
+    total: questionBank.filter((question) => question.reviewStatus === "approved").length
+  });
+}));
 
 // -- Delete all imported questions (reset to seed) ------------
-app.delete("/api/questions/reset", (_req, res) => {
-  questionBank = [...seedQuestions];
+app.delete("/api/questions/reset", asyncRoute(async (req, res) => {
+  const auth = requireRole(req, res, ["owner"]);
+  if (!auth) return;
+  questionBank = seedQuestions.map((question) => ({ ...question, reviewStatus: "approved" }));
+  if (database.isConfigured()) {
+    await database.resetQuestions(questionBank);
+  }
   if (fs.existsSync(bankFile)) fs.unlinkSync(bankFile);
   res.json({ ok: true, total: questionBank.length });
-});
+}));
 
 // -- Sessions -------------------------------------------------
 app.post("/api/session/create", (req, res) => {
@@ -1465,7 +1704,32 @@ app.get("/api/session/:sessionId/leaderboard", (req, res) => {
   return res.json({ leaderboard: leaderboardFor(session) });
 });
 
-app.get("/api/session/:sessionId/next-question", (req, res) => {
+app.get("/api/leaderboard", asyncRoute(async (req, res) => {
+  const gradeBand = String(req.query.gradeBand || "").trim();
+  const subject = String(req.query.subject || "").trim();
+  if (gradeBand && !/^(?:[1-9]|1[01])$/.test(gradeBand)) {
+    return res.status(400).json({ error: "gradeBand must be between 1 and 11." });
+  }
+  if (subject.length > 60) return res.status(400).json({ error: "subject is too long." });
+
+  const results = database.isConfigured()
+    ? await database.getLeaderboard({ gradeBand, subject })
+    : localQuizResults
+      .filter((result) => (!gradeBand || result.gradeBand === gradeBand) && (!subject || result.subject.toLowerCase() === subject.toLowerCase()))
+      .sort((a, b) => b.score - a.score || b.correctAnswers - a.correctAnswers || new Date(a.completedAt) - new Date(b.completedAt))
+      .reduce((best, result) => {
+        const previous = best.find((entry) => entry.nickname.toLowerCase() === result.nickname.toLowerCase());
+        if (!previous) best.push(result);
+        else if (result.score > previous.score || (result.score === previous.score && result.correctAnswers > previous.correctAnswers)) {
+          best[best.indexOf(previous)] = result;
+        }
+        return best;
+      }, [])
+      .slice(0, 50);
+  return res.json({ leaderboard: publicLeaderboard(results), persistent: database.isConfigured() });
+}));
+
+app.get("/api/session/:sessionId/next-question", asyncRoute(async (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -1479,6 +1743,7 @@ app.get("/api/session/:sessionId/next-question", (req, res) => {
     if (!session.currentRound) {
       const round = createRoundForSession(session, questionBank);
       if (!round) {
+        await persistSessionResults(session);
         return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
       }
     }
@@ -1491,6 +1756,7 @@ app.get("/api/session/:sessionId/next-question", (req, res) => {
       session.currentRound = null;
       const nextRound = createRoundForSession(session, questionBank);
       if (!nextRound) {
+        await persistSessionResults(session);
         return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
       }
       const nextProgress = roundProgress(session);
@@ -1534,11 +1800,15 @@ app.get("/api/session/:sessionId/next-question", (req, res) => {
   const limit = Number(session.questionLimit || QUESTION_LIMIT_DEFAULT);
   if ((session.askedQuestionIds || []).length >= limit) {
     session.currentRound = null;
+    await persistSessionResults(session);
     return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
   }
 
-  const q = getNextQuestion(session, questionBank);
-  if (!q) return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
+  const q = getNextQuestion(session, questionBank.filter((question) => question.reviewStatus === "approved"));
+  if (!q) {
+    await persistSessionResults(session);
+    return res.json({ done: true, message: "No more questions for this session.", leaderboard: leaderboardFor(session) });
+  }
 
   const roundQuestion = buildRoundQuestion(q);
   session.currentRound = {
@@ -1555,7 +1825,7 @@ app.get("/api/session/:sessionId/next-question", (req, res) => {
     questionLimit: limit,
     secondsLeft: Math.ceil(Number(session.questionTimeLimitMs || QUESTION_TIME_LIMIT_MS_DEFAULT) / 1000)
   });
-});
+}));
 
 app.post("/api/session/:sessionId/answer", (req, res) => {
   const session = sessions.get(req.params.sessionId);
@@ -1629,6 +1899,8 @@ app.post("/api/session/:sessionId/answer", (req, res) => {
     const player = (session.players || []).find((item) => item.playerId === playerId);
     if (player) {
       player.score += pointsDelta;
+      player.questionsAnswered += 1;
+      if (isCorrect) player.correctAnswers += 1;
       playerScore = player.score;
     }
   }
@@ -1657,4 +1929,26 @@ app.post("/api/session/:sessionId/answer", (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`Jam-Pak EDU running: http://localhost:${PORT}`));
+app.use((error, _req, res, next) => {
+  console.error("Request failed:", error);
+  if (res.headersSent) return next(error);
+  return res.status(500).json({ error: "The server could not complete this request. Please try again." });
+});
+
+async function startServer() {
+  if (database.isConfigured()) {
+    questionBank = await database.initialize(questionBank);
+    console.log(`Connected to PostgreSQL. Loaded ${questionBank.length} questions.`);
+    const pendingCount = questionBank.filter((question) => question.reviewStatus === "pending").length;
+    if (pendingCount) console.log(`${pendingCount} questions need teacher review before public play.`);
+  } else {
+    console.warn("DATABASE_URL is not set; quiz results and question changes are not durable across restarts.");
+  }
+  app.listen(PORT, () => console.log(`Jam-Pak EDU running: http://localhost:${PORT}`));
+}
+
+startServer().catch(async (error) => {
+  console.error("Could not start Jam-Pak EDU:", error);
+  await database.close();
+  process.exitCode = 1;
+});

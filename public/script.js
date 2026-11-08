@@ -3,10 +3,18 @@
    ============================================================ */
 
 const app = document.getElementById("app");
+function escapeHTML(value) {
+  return String(value || "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  })[character]);
+}
+
 const API_BASE = (() => {
   if (window.location.protocol === "file:") return "http://localhost:3001";
-  const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  if (isLocal && window.location.port !== "3001") return "http://localhost:3001";
   return "";
 })();
 
@@ -94,6 +102,12 @@ function soloTopicsForGrade(subject, grade) {
   return groups.find((group) => gradeNumber >= group.min && gradeNumber <= group.max)?.topics || [subject];
 }
 
+function topicOptionsMarkup(subject, grade) {
+  return soloTopicsForGrade(subject, grade)
+    .map((topic) => `<option value="${escapeHTML(topic)}"></option>`)
+    .join("");
+}
+
 const AVATAR_CHOICES = [
   "island-ace","sunset-star","reggae-rider","blue-wave","gold-leaf","mint-vibe",
   "jamaica-star","class-champ","quiz-hero","island-spark","learning-wave","book-blaze",
@@ -156,7 +170,9 @@ const teacherState = {
   quizzes: [],
   pendingSchoolId: "",
   pendingTeachingLevel: "high",
-  prefillEmail: ""
+  prefillEmail: "",
+  activeTab: "classes",
+  questionReviewPages: 1
 };
 const studentState = {
   accessToken: null,
@@ -269,11 +285,77 @@ function headerMini() {
 function footerHTML() {
   return `
     <footer class="footer">
-      &copy; 2025-2026
-      <span class="brand-name">Jam-Pak EDU</span>
-      <span class="sep">|</span>
-      All Rights Reserved
+      <div>&copy; 2025-2026 <span class="brand-name">Jam-Pak EDU</span> <span class="sep">|</span> All Rights Reserved</div>
+      <div class="footer-credit">Built by <span class="creator">Shantaye Williams</span></div>
+      <div class="footer-vision">My hope is for Jam-Pak EDU to grow into a Jamaican learning company listed on the Jamaica Stock Exchange.</div>
     </footer>`;
+}
+
+function renderGlobalLeaderboard() {
+  app.innerHTML = `
+    <div class="page">
+      ${headerMini()}
+      <div class="inner-page inner-page-wide">
+        <div class="inner-header">
+          <span class="inner-title">Jam-Pak EDU Leaderboard</span>
+          <button class="btn-back" id="leaderboardBackBtn">Home</button>
+        </div>
+        <div class="panel leaderboard-panel">
+          <p class="status-note">Top personal scores. Only your gameplay nickname is shown publicly.</p>
+          <div class="leaderboard-filters">
+            <label class="field-label" for="leaderboardGrade">Grade</label>
+            <select id="leaderboardGrade"><option value="">All grades</option>${builderSelectOptions(GRADE_LEVELS)}</select>
+            <label class="field-label" for="leaderboardSubject">Subject</label>
+            <select id="leaderboardSubject"><option value="">All subjects</option>${builderSelectOptions(BUILDER_SUBJECT_CHOICES)}</select>
+          </div>
+          <p class="status-note" id="leaderboardStatus">Loading scores...</p>
+          <div class="leaderboard" id="globalLeaderboardRows"></div>
+        </div>
+      </div>
+    </div>
+    ${footerHTML()}`;
+
+  document.getElementById("leaderboardBackBtn").onclick = renderHome;
+  const status = document.getElementById("leaderboardStatus");
+  const rows = document.getElementById("globalLeaderboardRows");
+  const load = async () => {
+    status.textContent = "Loading scores...";
+    rows.innerHTML = "";
+    const params = new URLSearchParams();
+    const grade = document.getElementById("leaderboardGrade").value;
+    const subject = document.getElementById("leaderboardSubject").value;
+    if (grade) params.set("gradeBand", grade);
+    if (subject) params.set("subject", subject);
+    try {
+      const result = await api(`/api/leaderboard?${params.toString()}`);
+      if (!result.leaderboard.length) {
+        status.textContent = "No completed scores yet. Finish a quiz to claim the first spot!";
+        return;
+      }
+      status.textContent = result.persistent
+        ? "All-time best scores · Top 50"
+        : "Local preview only. Add PostgreSQL to keep scores after a restart.";
+      rows.innerHTML = result.leaderboard.map((entry) => {
+        const accuracy = entry.questionsAnswered
+          ? Math.round(entry.correctAnswers * 100 / entry.questionsAnswered)
+          : 0;
+        return `
+          <div class="leader-row${entry.rank <= 3 ? ` top rank-${entry.rank}` : ""}">
+            <div class="leader-left">
+              <span class="leader-rank">#${entry.rank}</span>
+              <span class="leader-name">${escapeHTML(entry.nickname)}</span>
+              <span class="leader-detail">Grade ${escapeHTML(entry.gradeBand)} · ${escapeHTML(entry.subject)} · ${accuracy}% accuracy</span>
+            </div>
+            <strong class="leader-score">${entry.score} pts</strong>
+          </div>`;
+      }).join("");
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  };
+  document.getElementById("leaderboardGrade").onchange = load;
+  document.getElementById("leaderboardSubject").onchange = load;
+  load();
 }
 
 function stepDots(total, current) {
@@ -396,6 +478,28 @@ async function api(url, method, body, accessToken) {
   return data;
 }
 
+function wireVerificationResend(role, emailInputId, statusId) {
+  const button = document.getElementById(`${role}ResendVerificationBtn`);
+  button.onclick = async () => {
+    const email = document.getElementById(emailInputId).value.trim();
+    const status = document.getElementById(statusId);
+    if (!email) {
+      status.textContent = "Enter your email address first.";
+      return;
+    }
+    button.disabled = true;
+    status.textContent = "Requesting a new verification email...";
+    try {
+      const result = await api("/api/auth/resend-verification", "POST", { role, email });
+      status.textContent = result.message;
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
 async function fetchSchools(searchText, levelFilter = "") {
   const query = String(searchText || "").trim();
   const level = String(levelFilter || "").trim().toLowerCase();
@@ -506,6 +610,7 @@ function renderHome() {
         </div>
         <div class="selected-pack-label">Selected Pack <strong id="selectedPackValue">None</strong></div>
         <div class="home-tools">
+          <button class="btn-back" id="leaderboardBtn">Leaderboard</button>
           <button class="btn-back" id="teacherPortalBtn">${teacherState.accessToken ? "Teacher Portal" : "Teacher Sign In"}</button>
           <button class="btn-back" id="studentPortalBtn">${studentState.accessToken ? "Student Portal" : "Student Sign In"}</button>
         </div>
@@ -517,6 +622,7 @@ function renderHome() {
   document.getElementById("card-join").onclick = renderJoin;
   document.getElementById("card-solo").onclick = () => renderSolo(1);
   document.getElementById("card-debate").onclick = renderDebate;
+  document.getElementById("leaderboardBtn").onclick = renderGlobalLeaderboard;
   document.getElementById("teacherPortalBtn").onclick = () => {
     if (teacherState.accessToken) {
       renderTeacherPortal();
@@ -665,6 +771,7 @@ function renderTeacherAccess() {
           <label class="field-label" for="teacherPassword">Teacher Password</label>
           <input type="password" id="teacherPassword" placeholder="Teacher password"/>
           <button class="btn-primary btn-gold" id="teacherLoginBtn">Sign In</button>
+          <button class="btn-back btn-inline" id="teacherResendVerificationBtn">Resend verification email</button>
           <button class="btn-back btn-inline" id="teacherCreateBtn">Create Teacher Account</button>
           <p class="status-note" id="teacherStatus"></p>
         </div>
@@ -674,6 +781,7 @@ function renderTeacherAccess() {
 
   document.getElementById("teacherBackBtn").onclick = renderHome;
   document.getElementById("teacherCreateBtn").onclick = () => renderTeacherRegister();
+  wireVerificationResend("teacher", "teacherEmail", "teacherStatus");
   document.getElementById("teacherLoginBtn").onclick = async () => {
     const email = document.getElementById("teacherEmail").value.trim();
     const password = document.getElementById("teacherPassword").value.trim();
@@ -823,6 +931,7 @@ function renderStudentAccess() {
           <label class="field-label" for="studentPassword">Student Password</label>
           <input type="password" id="studentPassword" placeholder="Student password"/>
           <button class="btn-primary btn-gold" id="studentLoginBtn">Sign In</button>
+          <button class="btn-back btn-inline" id="studentResendVerificationBtn">Resend verification email</button>
           <button class="btn-back btn-inline" id="studentCreateBtn">Create Student Account</button>
           <p class="status-note" id="studentStatus"></p>
         </div>
@@ -832,6 +941,7 @@ function renderStudentAccess() {
 
   document.getElementById("studentBackBtn").onclick = renderHome;
   document.getElementById("studentCreateBtn").onclick = () => renderStudentRegister();
+  wireVerificationResend("student", "studentEmail", "studentStatus");
   document.getElementById("studentLoginBtn").onclick = async () => {
     const email = document.getElementById("studentEmail").value.trim();
     const password = document.getElementById("studentPassword").value.trim();
@@ -1264,6 +1374,9 @@ async function renderTeacherPortal() {
   let quizzes = [];
   let assignments = [];
   let pendingReviews = [];
+  let questionReviews = [];
+  let questionReviewTotal = 0;
+  let questionReviewError = "";
   let sessionExpired = false;
   try {
     const classResult = await api("/api/teacher/classes", "GET", null, teacherState.accessToken);
@@ -1291,6 +1404,18 @@ async function renderTeacherPortal() {
     pendingReviews = reviewResult.reviews || [];
   } catch (_error) {
     pendingReviews = [];
+  }
+  try {
+    for (let offset = 0; offset < teacherState.questionReviewPages * 50; offset += 50) {
+      const questionReviewResult = await api(`/api/questions/review?limit=50&offset=${offset}`, "GET", null, teacherState.accessToken);
+      questionReviews.push(...(questionReviewResult.questions || []));
+      questionReviewTotal = questionReviewResult.total || 0;
+      if (questionReviews.length >= questionReviewTotal) break;
+    }
+  } catch (_error) {
+    questionReviews = [];
+    questionReviewTotal = 0;
+    questionReviewError = _error.message;
   }
   teacherState.classes = classes;
   teacherState.quizzes = quizzes;
@@ -1341,6 +1466,53 @@ async function renderTeacherPortal() {
       </div>
     </div>`).join("");
 
+  const normalizeReviewPrompt = (prompt) => String(prompt || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const questionReviewsHTML = questionReviews.map((question) => {
+    const correctAnswer = question.type === "mcq"
+      ? question.options?.find((option) => option.id === question.correctOptionId)?.text || question.correctOptionId
+      : question.type === "true_false"
+        ? String(question.correctBoolean)
+        : (question.acceptableAnswers || []).join(", ");
+    const choices = question.type === "mcq"
+      ? (question.options || []).map((option) => `${String(option.id || "").toUpperCase()}. ${option.text || ""}`).join(" · ")
+      : question.type === "true_false"
+        ? "True · False"
+        : (question.acceptableAnswers || []).join(" · ");
+    const crossGradeDuplicate = questionReviews.some((other) =>
+      other.id !== question.id
+      && String(other.subject).toLowerCase() === String(question.subject).toLowerCase()
+      && String(other.gradeBand) !== String(question.gradeBand)
+      && normalizeReviewPrompt(other.prompt) === normalizeReviewPrompt(question.prompt)
+    );
+    const reviewNote = [
+      question.reviewNote,
+      crossGradeDuplicate && !String(question.reviewNote || "").includes("another grade")
+        ? `This prompt also appears in another grade. Check that this version belongs in Grade ${question.gradeBand}.`
+        : ""
+    ].filter(Boolean).join(" ");
+    return `
+      <div class="tp-review-item" id="tp-question-review-${escapeHTML(question.id)}">
+        <label class="field-label" for="tpQuestionGrade-${escapeHTML(question.id)}">Grade</label>
+        <select id="tpQuestionGrade-${escapeHTML(question.id)}">
+          <option value="">Choose exact grade</option>${builderSelectOptions(GRADE_LEVELS, String(question.gradeBand))}
+        </select>
+        <label class="field-label" for="tpQuestionSubject-${escapeHTML(question.id)}">Subject</label>
+        <select id="tpQuestionSubject-${escapeHTML(question.id)}">${builderSelectOptions(BUILDER_SUBJECT_CHOICES, question.subject)}</select>
+        <label class="field-label" for="tpQuestionCategory-${escapeHTML(question.id)}">Topic / category</label>
+        <input id="tpQuestionCategory-${escapeHTML(question.id)}" value="${escapeHTML(question.category)}" placeholder="Use a specific topic name"/>
+        <div class="tp-review-question">${escapeHTML(question.prompt)}</div>
+        <div class="tp-review-answer">Choices / accepted answers: ${escapeHTML(choices)}</div>
+        <div class="tp-review-answer">Correct answer: <strong>${escapeHTML(correctAnswer)}</strong></div>
+        <label class="field-label" for="tpQuestionExplanation-${escapeHTML(question.id)}">Student explanation</label>
+        <textarea id="tpQuestionExplanation-${escapeHTML(question.id)}" rows="2" placeholder="Explain why the correct answer is right.">${escapeHTML(question.explanation || "")}</textarea>
+        <p class="status-note">${escapeHTML(reviewNote || "Review the grade, answer, and explanation before approving this question.")}</p>
+        <div class="tp-review-btns">
+          <button class="btn-primary tp-question-approve-btn" data-questionid="${escapeHTML(question.id)}">Approve</button>
+          <button class="btn-back tp-question-reject-btn" data-questionid="${escapeHTML(question.id)}">Reject</button>
+        </div>
+      </div>`;
+  }).join("");
+
   const reviewTabLabel = pendingReviews.length
     ? `<button class="tp-tab tp-tab-alert" data-tab="reviews">Reviews (${pendingReviews.length})</button>`
     : "";
@@ -1389,7 +1561,7 @@ async function renderTeacherPortal() {
           <button class="tp-tab" data-tab="assignments">Assignments (${assignments.length})</button>
           <button class="tp-tab" data-tab="quizzes">Quizzes</button>
           <button class="tp-tab" data-tab="create">Create Quiz</button>
-          <button class="tp-tab" data-tab="questions">Questions</button>
+          <button class="tp-tab" data-tab="questions">Questions${questionReviewTotal ? ` (${questionReviewTotal} pending)` : ""}</button>
           ${reviewTabLabel}
         </div>
 
@@ -1464,10 +1636,19 @@ async function renderTeacherPortal() {
         <!-- QUESTIONS TAB -->
         <div class="tp-section hidden" id="tp-tab-questions">
           <div class="panel">
+            <p class="section-heading">Questions Awaiting Approval (${questionReviewTotal})</p>
+            <p class="status-note">Only approved questions appear in quizzes. Check the grade, correct answer, and explanation before approving.</p>
+            ${questionReviewError ? `<p class="status-note">${escapeHTML(questionReviewError)}</p>` : ""}
+            ${questionReviewsHTML || `<p class="status-note">No questions need review right now.</p>`}
+            ${questionReviews.length < questionReviewTotal ? `<button class="btn-back" id="tpLoadMoreQuestionsBtn">Load more questions</button>` : ""}
+          </div>
+          <div class="panel">
             <p class="section-heading">Teacher Question Builder</p>
             <select id="tqGrade">${builderSelectOptions(GRADE_LEVELS, "1")}</select>
             <select id="tqSubject">${builderSelectOptions(BUILDER_SUBJECT_CHOICES, "Math")}</select>
-            <input type="text" id="tqCategory" placeholder="Category (optional)"/>
+            <label class="field-label" for="tqCategory">Specific topic / category</label>
+            <input type="text" id="tqCategory" list="tqTopicOptions" placeholder="Use a topic students can select, e.g. Fractions"/>
+            <datalist id="tqTopicOptions"></datalist>
             <select id="tqType">
               <option value="mcq">Multiple Choice</option>
               <option value="true_false">True / False</option>
@@ -1475,6 +1656,8 @@ async function renderTeacherPortal() {
             </select>
             <input type="text" id="tqPrompt" placeholder="Question prompt"/>
             <div id="tqTypeFields"></div>
+            <label class="field-label" for="tqExplanation">Student explanation (required)</label>
+            <textarea id="tqExplanation" rows="3" placeholder="Explain why the correct answer is right."></textarea>
             <button class="btn-primary btn-gold" id="tpAddQuestionBtn">Add Question</button>
             <p class="status-note" id="tpQuestionStatus"></p>
           </div>
@@ -1500,11 +1683,16 @@ async function renderTeacherPortal() {
       document.querySelectorAll(".tp-tab").forEach((t) => t.classList.remove("active"));
       btn.classList.add("active");
       const tabName = btn.dataset.tab;
+      teacherState.activeTab = tabName;
       document.querySelectorAll(".tp-section").forEach((sec) => sec.classList.add("hidden"));
       const target = document.getElementById(`tp-tab-${tabName}`);
       if (target) target.classList.remove("hidden");
     };
   });
+  if (teacherState.activeTab !== "classes") {
+    const activeTab = document.querySelector(`.tp-tab[data-tab="${teacherState.activeTab}"]`);
+    if (activeTab) activeTab.click();
+  }
 
   // â”€â”€ Header buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   document.getElementById("teacherPortalBackBtn").onclick = renderHome;
@@ -1513,6 +1701,37 @@ async function renderTeacherPortal() {
     teacherState.teacher = null;
     renderHome();
   };
+
+  document.querySelectorAll(".tp-question-approve-btn, .tp-question-reject-btn").forEach((button) => {
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const reviewStatus = button.classList.contains("tp-question-approve-btn") ? "approved" : "rejected";
+        await api(`/api/questions/${encodeURIComponent(button.dataset.questionid)}/review`, "PATCH", {
+          reviewStatus,
+          gradeBand: document.getElementById(`tpQuestionGrade-${button.dataset.questionid}`).value,
+          subject: document.getElementById(`tpQuestionSubject-${button.dataset.questionid}`).value,
+          category: document.getElementById(`tpQuestionCategory-${button.dataset.questionid}`).value.trim(),
+          explanation: document.getElementById(`tpQuestionExplanation-${button.dataset.questionid}`).value.trim()
+        }, teacherState.accessToken);
+        teacherState.questionReviewPages = 1;
+        teacherState.activeTab = "questions";
+        renderTeacherPortal();
+      } catch (error) {
+        button.disabled = false;
+        const status = document.getElementById("tpQuestionStatus");
+        if (status) status.textContent = error.message;
+      }
+    };
+  });
+  const loadMoreQuestionsBtn = document.getElementById("tpLoadMoreQuestionsBtn");
+  if (loadMoreQuestionsBtn) {
+    loadMoreQuestionsBtn.onclick = () => {
+      teacherState.questionReviewPages += 1;
+      teacherState.activeTab = "questions";
+      renderTeacherPortal();
+    };
+  }
 
   // â”€â”€ Empty state â†’ Create Quiz tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const goCreateBtn = document.getElementById("tpGoCreateBtn");
@@ -1706,6 +1925,15 @@ async function renderTeacherPortal() {
   // â”€â”€ Question builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const tqType = document.getElementById("tqType");
   const tqFields = document.getElementById("tqTypeFields");
+  const updateTeacherTopicOptions = () => {
+    document.getElementById("tqTopicOptions").innerHTML = topicOptionsMarkup(
+      document.getElementById("tqSubject").value,
+      document.getElementById("tqGrade").value
+    );
+  };
+  document.getElementById("tqGrade").onchange = updateTeacherTopicOptions;
+  document.getElementById("tqSubject").onchange = updateTeacherTopicOptions;
+  updateTeacherTopicOptions();
   const renderTeacherTypeFields = () => {
     if (tqType.value === "mcq") {
       tqFields.innerHTML = `
@@ -1730,8 +1958,7 @@ async function renderTeacherPortal() {
       return;
     }
     tqFields.innerHTML = `
-      <input type="text" id="tqAnswers" placeholder="Accepted answers (comma separated)"/>
-      <input type="text" id="tqExplanation" placeholder="Explanation (optional)"/>`;
+      <input type="text" id="tqAnswers" placeholder="Accepted answers (comma separated)"/>`;
   };
   tqType.onchange = renderTeacherTypeFields;
   renderTeacherTypeFields();
@@ -1740,11 +1967,20 @@ async function renderTeacherPortal() {
     const status = document.getElementById("tpQuestionStatus");
     const gradeBand = document.getElementById("tqGrade").value;
     const subject = document.getElementById("tqSubject").value;
-    const category = document.getElementById("tqCategory").value.trim() || subject;
+    const category = document.getElementById("tqCategory").value.trim();
     const type = document.getElementById("tqType").value;
     const prompt = document.getElementById("tqPrompt").value.trim();
     if (!prompt) { status.textContent = "Enter a question prompt."; return; }
-    const q = { gradeBand, subject, category, difficulty: "easy", type, prompt, options: [], explanation: "" };
+    const explanation = document.getElementById("tqExplanation").value.trim();
+    if (!category) {
+      status.textContent = "Add a specific topic or category.";
+      return;
+    }
+    if (explanation.length < 10) {
+      status.textContent = "Add a clear explanation of at least 10 characters.";
+      return;
+    }
+    const q = { gradeBand, subject, category, difficulty: "easy", type, prompt, options: [], explanation };
     if (type === "mcq") {
       const a = document.getElementById("tqOptA").value.trim();
       const b = document.getElementById("tqOptB").value.trim();
@@ -1765,13 +2001,15 @@ async function renderTeacherPortal() {
       q.correctOptionId = null;
       q.correctBoolean = null;
       q.acceptableAnswers = answers;
-      q.explanation = document.getElementById("tqExplanation").value.trim();
     }
     status.textContent = "Saving question...";
     try {
       await api("/api/questions/import", "POST", { questions: [q] }, teacherState.accessToken);
-      status.textContent = "Question added to bank.";
       document.getElementById("tqPrompt").value = "";
+      document.getElementById("tqExplanation").value = "";
+      teacherState.questionReviewPages = 1;
+      teacherState.activeTab = "questions";
+      renderTeacherPortal();
     } catch (error) {
       status.textContent = error.message;
     }
@@ -1854,8 +2092,9 @@ function renderQuestionBuilder() {
           <label class="field-label" for="qbSubject">Subject</label>
           <select id="qbSubject">${builderSelectOptions(BUILDER_SUBJECT_CHOICES, "Math")}</select>
 
-          <label class="field-label" for="qbCategory">Category</label>
-          <input type="text" id="qbCategory" placeholder="e.g., Basic Math"/>
+          <label class="field-label" for="qbCategory">Specific topic / category</label>
+          <input type="text" id="qbCategory" list="qbTopicOptions" placeholder="Use a topic students can select, e.g. Fractions"/>
+          <datalist id="qbTopicOptions"></datalist>
 
           <label class="field-label" for="qbType">Question Type</label>
           <select id="qbType">
@@ -1868,6 +2107,8 @@ function renderQuestionBuilder() {
           <input type="text" id="qbPrompt" placeholder="Type the question"/>
 
           <div id="qbTypeFields"></div>
+          <label class="field-label" for="qbExplanation">Student explanation (required)</label>
+          <textarea id="qbExplanation" rows="3" placeholder="Explain why the correct answer is right."></textarea>
 
           <button class="btn-primary btn-gold" id="qbSaveBtn">Add Question</button>
           <p class="status-note" id="qbStatus"></p>
@@ -1879,6 +2120,15 @@ function renderQuestionBuilder() {
   const typeFields = document.getElementById("qbTypeFields");
   const typeSelect = document.getElementById("qbType");
   const status = document.getElementById("qbStatus");
+  const updateOwnerTopicOptions = () => {
+    document.getElementById("qbTopicOptions").innerHTML = topicOptionsMarkup(
+      document.getElementById("qbSubject").value,
+      document.getElementById("qbGrade").value
+    );
+  };
+  document.getElementById("qbGrade").onchange = updateOwnerTopicOptions;
+  document.getElementById("qbSubject").onchange = updateOwnerTopicOptions;
+  updateOwnerTopicOptions();
 
   const renderTypeFields = () => {
     const type = typeSelect.value;
@@ -1914,9 +2164,7 @@ function renderQuestionBuilder() {
 
     typeFields.innerHTML = `
       <label class="field-label" for="qbAnswers">Accepted Answers (comma separated)</label>
-      <input type="text" id="qbAnswers" placeholder="e.g., 10, ten"/>
-      <label class="field-label" for="qbExplanation">Explanation (optional)</label>
-      <input type="text" id="qbExplanation" placeholder="Optional explanation"/>`;
+      <input type="text" id="qbAnswers" placeholder="e.g., 10, ten"/>`;
   };
 
   typeSelect.onchange = renderTypeFields;
@@ -1951,12 +2199,16 @@ function renderQuestionBuilder() {
   document.getElementById("qbSaveBtn").onclick = async () => {
     const gradeBand = document.getElementById("qbGrade").value;
     const subject = document.getElementById("qbSubject").value;
-    const category = document.getElementById("qbCategory").value.trim() || subject;
+    const category = document.getElementById("qbCategory").value.trim();
     const prompt = document.getElementById("qbPrompt").value.trim();
     const type = typeSelect.value;
 
     if (!prompt) {
       status.textContent = "Please enter a question prompt.";
+      return;
+    }
+    if (!category) {
+      status.textContent = "Add a specific topic or category.";
       return;
     }
 
@@ -1968,8 +2220,12 @@ function renderQuestionBuilder() {
       type,
       prompt,
       options: [],
-      explanation: ""
+      explanation: document.getElementById("qbExplanation").value.trim()
     };
+    if (payload.explanation.length < 10) {
+      status.textContent = "Add a clear explanation of at least 10 characters.";
+      return;
+    }
 
     if (type === "mcq") {
       const a = document.getElementById("qbOptA").value.trim();
@@ -2001,7 +2257,6 @@ function renderQuestionBuilder() {
         return;
       }
       payload.acceptableAnswers = answers;
-      payload.explanation = document.getElementById("qbExplanation").value.trim();
       payload.correctOptionId = null;
       payload.correctBoolean = null;
     }
@@ -2009,8 +2264,11 @@ function renderQuestionBuilder() {
     status.textContent = "Saving question...";
     try {
       const result = await api("/api/questions/import", "POST", { questions: [payload] }, ownerState.accessToken);
-      status.textContent = `Saved. Total bank now: ${result.total}`;
+      status.textContent = result.pendingReview
+        ? "Submitted for teacher review."
+        : `Saved. Total approved questions: ${result.total}`;
       document.getElementById("qbPrompt").value = "";
+      document.getElementById("qbExplanation").value = "";
       if (type === "mcq") {
         document.getElementById("qbOptA").value = "";
         document.getElementById("qbOptB").value = "";
@@ -2018,7 +2276,6 @@ function renderQuestionBuilder() {
         document.getElementById("qbOptD").value = "";
       } else if (type === "short_answer") {
         document.getElementById("qbAnswers").value = "";
-        document.getElementById("qbExplanation").value = "";
       }
     } catch (error) {
       status.textContent = error.message;
@@ -2032,8 +2289,8 @@ function renderHost(step) {
   if (step === 1) {
     if (!hostState.avatarId) hostState.avatarId = "island-ace";
     content = `
-      <label class="field-label" for="hostName">Your Name</label>
-      <input type="text" id="hostName" placeholder="Enter your name"
+      <label class="field-label" for="hostName">Game nickname</label>
+      <input type="text" id="hostName" maxlength="24" placeholder="Choose a nickname"
              value="${hostState.name || ""}" autocomplete="off"/>
       <p class="section-heading">Choose Avatar</p>
       <div class="avatar-grid">${avatarCardsMarkup(hostState.avatarId)}</div>
@@ -2205,8 +2462,8 @@ function renderJoin() {
           <button class="btn-back" id="backBtn">Back</button>
         </div>
         <div class="panel">
-          <label class="field-label" for="joinName">Your Name</label>
-          <input type="text" id="joinName" placeholder="Enter your name" autocomplete="off"/>
+          <label class="field-label" for="joinName">Game nickname</label>
+          <input type="text" id="joinName" maxlength="24" placeholder="Choose a nickname" autocomplete="off"/>
           <p class="section-heading">Choose Avatar</p>
           <div class="avatar-grid">${avatarCardsMarkup(joinState.avatarId)}</div>
 
@@ -2270,8 +2527,8 @@ function renderSolo(step) {
 
   if (step === 1) {
     content = `
-      <label class="field-label" for="soloName">Your Name</label>
-      <input type="text" id="soloName" placeholder="Enter your name"
+      <label class="field-label" for="soloName">Choose a nickname</label>
+      <input type="text" id="soloName" maxlength="24" placeholder="Choose a nickname"
              value="${soloState.name || ""}" autocomplete="off"/>
       <button class="btn-primary" id="soloNext">Continue</button>`;
   } else if (step === 2) {
@@ -2294,25 +2551,27 @@ function renderSolo(step) {
       <button class="btn-primary" id="soloNext">Continue</button>
       <p class="status-note center" id="soloStatus"></p>`;
   } else if (step === 4) {
-    const topics = soloTopicsForGrade(soloState.subject, soloState.grade);
-    if (!soloState.topic || !topics.includes(soloState.topic)) soloState.topic = topics[0];
+    const topics = Array.isArray(soloState.availableTopics) ? soloState.availableTopics : [];
+    if (topics.length && !topics.some((topic) => topic.name === soloState.topic)) soloState.topic = topics[0].name;
     content = `
       <p class="section-heading">Choose Topic</p>
       <div class="debate-category-list solo-topic-list">
-        ${topics.map((topic) => `<button class="debate-category-btn${soloState.topic === topic ? " selected" : ""}" type="button" data-topic="${topic}">${topic}</button>`).join("")}
+        ${topics.map((topic) => `<button class="debate-category-btn${soloState.topic === topic.name ? " selected" : ""}" type="button" data-topic="${escapeHTML(topic.name)}">${escapeHTML(topic.name)} <small>(${topic.count})</small></button>`).join("")}
       </div>
-      <button class="btn-primary" id="soloNext">Continue</button>
-      <p class="status-note center" id="soloStatus"></p>`;
+      <button class="btn-primary" id="soloNext"${!topics.length ? " disabled" : ""}>Continue</button>
+      <p class="status-note center" id="soloStatus">${soloState.availableTopicsLoaded
+        ? (topics.length ? "" : "No approved questions are available for this grade and subject yet.")
+        : "Loading available topics..."}</p>`;
   } else if (step === 5) {
     content = `
-      <p class="section-heading">${soloState.topic}</p>
+      <p class="section-heading">${escapeHTML(soloState.topic)}</p>
       <div class="solo-progression">
         <span class="active">LEARN</span><span>PRACTICE</span><span>CHALLENGE</span><span>QUIZ</span>
       </div>
       <div class="solo-study-card">
         <p class="status-note">Study this topic, then test your understanding with focused questions.</p>
-        <p class="solo-study-title">${soloState.subject} - Grade ${soloState.grade}</p>
-        <p class="solo-study-copy">Your quiz will use questions tagged specifically for ${soloState.topic}. If no exact questions are available yet, the session will tell you instead of mixing unrelated material.</p>
+        <p class="solo-study-title">${escapeHTML(soloState.subject)} - Grade ${escapeHTML(soloState.grade)}</p>
+        <p class="solo-study-copy">Your quiz will use approved questions tagged specifically for ${escapeHTML(soloState.topic)}. It will never substitute questions from another grade, subject, or topic.</p>
       </div>
       <button class="btn-primary btn-gold" id="soloStart">Start Practice</button>
       <p class="status-note center" id="soloStatus"></p>`;
@@ -2346,7 +2605,12 @@ function renderSolo(step) {
       renderSolo(2);
     };
   } else if (step === 2) {
-    bindGradeSelection((grade) => { soloState.grade = grade; });
+    bindGradeSelection((grade) => {
+      soloState.grade = grade;
+      soloState.topic = "";
+      soloState.availableTopics = null;
+      soloState.availableTopicsLoaded = false;
+    });
     document.getElementById("soloNext").onclick = () => {
       if (!soloState.grade) {
         alert("Please select a grade.");
@@ -2360,6 +2624,8 @@ function renderSolo(step) {
     bindSubjectSelection((subject) => {
       soloState.subject = subject;
       soloState.topic = "";
+      soloState.availableTopics = null;
+      soloState.availableTopicsLoaded = false;
     });
     document.getElementById("soloNext").onclick = () => {
       if (!soloState.subject || !isSubjectAllowedForGrade(soloState.grade, soloState.subject)) {
@@ -2369,7 +2635,6 @@ function renderSolo(step) {
       renderSolo(4);
     };
   } else if (step === 4) {
-    const topics = soloTopicsForGrade(soloState.subject, soloState.grade);
     document.querySelectorAll("[data-topic]").forEach((button) => {
       button.onclick = () => {
         document.querySelectorAll("[data-topic]").forEach((item) => item.classList.remove("selected"));
@@ -2377,8 +2642,23 @@ function renderSolo(step) {
         soloState.topic = button.dataset.topic;
       };
     });
+    if (!soloState.availableTopicsLoaded) {
+      api(`/api/questions/topics?gradeBand=${encodeURIComponent(soloState.grade)}&subject=${encodeURIComponent(soloState.subject)}`)
+        .then((result) => {
+          soloState.availableTopics = result.topics || [];
+          soloState.availableTopicsLoaded = true;
+          renderSolo(4);
+        })
+        .catch((error) => {
+          soloState.availableTopics = [];
+          soloState.availableTopicsLoaded = true;
+          const status = document.getElementById("soloStatus");
+          if (status) status.textContent = error.message;
+        });
+    }
     document.getElementById("soloNext").onclick = () => {
-      if (!soloState.topic || !topics.includes(soloState.topic)) {
+      const availableTopics = soloState.availableTopics || [];
+      if (!soloState.topic || !availableTopics.some((topic) => topic.name === soloState.topic)) {
         document.getElementById("soloStatus").textContent = "Please select a topic.";
         return;
       }
@@ -2399,6 +2679,8 @@ function renderSolo(step) {
         });
         startQuiz({
           sessionId: session.sessionId,
+          playerId: session.playerId,
+          playerName: soloState.name,
           modeLabel: "Solo Study",
           topic: `${soloState.grade} | ${soloState.subject} | ${soloState.topic}`
         });
@@ -2728,8 +3010,8 @@ function renderLeaderboardMarkup(leaderboard) {
         <div class="leader-row${index === 0 ? " top" : ""}">
           <div class="leader-left">
             <span class="leader-rank">#${index + 1}</span>
-            ${avatarImageTag(player.avatarId || "island-ace", player.name || "Player", "avatar-thumb")}
-            <span class="leader-name">${player.name}</span>
+            ${avatarImageTag(player.avatarId || "island-ace", escapeHTML(player.name || "Player"), "avatar-thumb")}
+            <span class="leader-name">${escapeHTML(player.name || "Player")}</span>
           </div>
           <strong class="leader-score">${player.score}</strong>
         </div>
@@ -2740,7 +3022,7 @@ function renderLeaderboardMarkup(leaderboard) {
 function renderQuizShell() {
   const scoreLabel = gameState.isMultiplayer ? "Your Score" : "Score";
   const playerBadge = gameState.isMultiplayer
-    ? `<span class="quiz-meta-item player-badge">${avatarImageTag(gameState.avatarId || "island-ace", gameState.playerName || "Player", "avatar-mini")} ${gameState.playerName || "Player"}</span>`
+    ? `<span class="quiz-meta-item player-badge">${avatarImageTag(gameState.avatarId || "island-ace", escapeHTML(gameState.playerName || "Player"), "avatar-mini")} ${escapeHTML(gameState.playerName || "Player")}</span>`
     : "";
 
   app.innerHTML = `
@@ -2757,7 +3039,7 @@ function renderQuizShell() {
           <span class="quiz-meta-item">Answered: <strong id="answeredValue">0</strong></span>
           <span class="quiz-meta-item">Time Left: <strong id="timerValue">15s</strong></span>
           ${playerBadge}
-          <span class="quiz-meta-item" id="topicBadge">${gameState.topic || "Live Questions"}</span>
+          <span class="quiz-meta-item" id="topicBadge">${escapeHTML(gameState.topic || "Live Questions")}</span>
         </div>
 
         <div class="panel quiz-panel">
@@ -2880,21 +3162,18 @@ async function loadNextQuestion() {
     if (data.done) {
       status.textContent = "Session complete.";
       prompt.textContent = "No more questions in this session.";
-      let leaderboardMarkup = "";
-      if (gameState.isMultiplayer) {
-        const leaderboardData = Array.isArray(data.leaderboard) ? data.leaderboard : [];
-        if (leaderboardData.length) {
-          leaderboardMarkup = renderLeaderboardMarkup(leaderboardData);
-        }
-      }
+      const leaderboardData = Array.isArray(data.leaderboard) ? data.leaderboard : [];
+      const leaderboardMarkup = renderLeaderboardMarkup(leaderboardData);
       optionsWrap.innerHTML = `
         <div class="quiz-complete">
           <p>Your final score is ${gameState.score} points over ${gameState.answered} questions.</p>
           ${leaderboardMarkup}
+          <button class="btn-back" id="globalLeaderboardFromComplete">View Global Leaderboard</button>
           <button class="btn-primary btn-gold" id="homeFromComplete">Back to Home</button>
         </div>`;
       const backHome = document.getElementById("homeFromComplete");
       if (backHome) backHome.onclick = renderHome;
+      document.getElementById("globalLeaderboardFromComplete").onclick = renderGlobalLeaderboard;
       return;
     }
 
@@ -3059,5 +3338,3 @@ if (/^JAM\d{5}$/i.test(linkedRoomCode || "")) {
 } else {
   renderHome();
 }
-
-

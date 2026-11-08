@@ -1,11 +1,13 @@
-﻿{
+{
   "name": "jampak-edu",
   "version": "1.0.0",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.22.3",
+    "pg": "^8.23.1"
   }
 }
