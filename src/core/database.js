@@ -3,10 +3,13 @@ const path = require("path");
 const { Pool } = require("pg");
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
+const databaseSsl = process.env.DATABASE_SSL === "true";
 const pool = databaseUrl
   ? new Pool({
       connectionString: databaseUrl,
-      ssl: process.env.DATABASE_SSL === "true" || process.env.NODE_ENV === "production" ? {} : undefined
+      ssl: databaseSsl
+        ? { rejectUnauthorized: false }
+        : process.env.NODE_ENV === "production" ? {} : undefined
     })
   : null;
 

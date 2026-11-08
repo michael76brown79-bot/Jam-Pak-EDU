@@ -51,6 +51,8 @@ Production requires PostgreSQL for accounts, classrooms, approved/reviewable que
    DATABASE_SSL=true
    ```
 
+Render's internal PostgreSQL connections use self-signed certificates. With `DATABASE_SSL=true`, Jam-Pak requires an encrypted TLS connection while accepting Render's internal certificate; use the **Internal Database URL** only for a same-region Render service. Do not use this setting for an untrusted public database.
+
 4. Deploy the web service. On first connection it creates the tables and indexes defined in `src/data/schema.sql`, imports the existing `src/data/question-bank.json`, and copies any existing `src/data/access-control.json` data into PostgreSQL. Question records are keyed to an individual grade and subject; quizzes no longer substitute questions from other grades or subjects.
 5. In the Teacher Portal, open **Questions** to review imported questions. With the current 703-question file, about 580 questions will need review because they lack a clear explanation or repeat a prompt across grades. They are kept in the database, but do not enter public quizzes until a teacher sets the exact grade/topic, adds an explanation, and approves them. The review queue is paged so it remains usable on a phone.
 
