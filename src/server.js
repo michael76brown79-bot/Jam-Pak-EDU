@@ -201,7 +201,19 @@ function hashSecret(secret) {
   return crypto.createHash("sha256").update(String(secret || "")).digest("hex");
 }
 
-function loadAccessControl() {
+function loadAccessControl(source) {
+  if (source && typeof source === "object") {
+    return {
+      ownerCodeHash: typeof source.ownerCodeHash === "string" ? source.ownerCodeHash : "",
+      teachers: Array.isArray(source.teachers) ? source.teachers : [],
+      students: Array.isArray(source.students) ? source.students : [],
+      schools: Array.isArray(source.schools) && source.schools.length ? source.schools : [...DEFAULT_JAMAICAN_SCHOOLS],
+      classes: Array.isArray(source.classes) ? source.classes : [],
+      quizzes: Array.isArray(source.quizzes) ? source.quizzes : [],
+      assignments: Array.isArray(source.assignments) ? source.assignments : [],
+      manualReviews: Array.isArray(source.manualReviews) ? source.manualReviews : []
+    };
+  }
   if (fs.existsSync(accessFile)) {
     try {
       const saved = JSON.parse(fs.readFileSync(accessFile, "utf8"));
@@ -231,26 +243,27 @@ function loadAccessControl() {
   };
 }
 
-function saveAccessControl(data) {
+async function saveAccessControl(data) {
+  if (database.isConfigured()) {
+    await database.saveApplicationState(data);
+    return;
+  }
   try {
     fs.writeFileSync(accessFile, JSON.stringify(data, null, 2), "utf8");
   } catch (e) {
-    console.error("Failed to save access control data:", e.message);
+    throw new Error(`Failed to save access control data: ${e.message}`, { cause: e });
   }
 }
 
 const accessControl = loadAccessControl();
 if (!Array.isArray(accessControl.schools) || !accessControl.schools.length) {
   accessControl.schools = [...DEFAULT_JAMAICAN_SCHOOLS];
-  saveAccessControl(accessControl);
 }
 if (!Array.isArray(accessControl.students)) {
   accessControl.students = [];
-  saveAccessControl(accessControl);
 }
 if (!Array.isArray(accessControl.assignments)) {
   accessControl.assignments = [];
-  saveAccessControl(accessControl);
 }
 accessControl.students.forEach((student) => {
   if (!Array.isArray(student.memberships)) student.memberships = normalizeStudentMemberships(student);
@@ -258,7 +271,6 @@ accessControl.students.forEach((student) => {
 accessControl.classes.forEach((teacherClass) => {
   if (!teacherClass.classCode) teacherClass.classCode = createClassCode(teacherClass.gradeBand);
 });
-saveAccessControl(accessControl);
 const authSessions = new Map();
 const verificationResends = new Map();
 const localQuizResults = [];
@@ -610,15 +622,8 @@ function normalizeTeacherProfiles(teachers, schools) {
 }
 
 {
-  const schoolsBefore = JSON.stringify(accessControl.schools || []);
-  const teachersBefore = JSON.stringify(accessControl.teachers || []);
   accessControl.schools = normalizeSchoolCatalog(accessControl.schools);
   accessControl.teachers = normalizeTeacherProfiles(accessControl.teachers, accessControl.schools);
-  const schoolsAfter = JSON.stringify(accessControl.schools || []);
-  const teachersAfter = JSON.stringify(accessControl.teachers || []);
-  if (schoolsBefore !== schoolsAfter || teachersBefore !== teachersAfter) {
-    saveAccessControl(accessControl);
-  }
 }
 
 function isOwnerCodeConfigured() {
@@ -783,7 +788,7 @@ app.get("/api/teachers/:teacherId/classes/public", (req, res) => {
   return res.json({ classes });
 });
 
-app.post("/api/auth/owner/setup", (req, res) => {
+app.post("/api/auth/owner/setup", asyncRoute(async (req, res) => {
   if (OWNER_ACCESS_CODE) {
     return res.status(409).json({ error: "Owner access code is managed by OWNER_ACCESS_CODE environment variable." });
   }
@@ -799,9 +804,9 @@ app.post("/api/auth/owner/setup", (req, res) => {
     return res.status(400).json({ error: "Owner access code must be at least 12 characters." });
   }
   accessControl.ownerCodeHash = hashSecret(code);
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, configured: true });
-});
+}));
 
 app.post("/api/auth/owner/login", (req, res) => {
   const { accessCode } = req.body || {};
@@ -816,7 +821,7 @@ app.post("/api/auth/owner/login", (req, res) => {
   return res.json({ ok: true, role: "owner", accessToken });
 });
 
-app.post("/api/auth/teacher/register", async (req, res) => {
+app.post("/api/auth/teacher/register", asyncRoute(async (req, res) => {
   const { name, email, password, schoolId, teachingLevel } = req.body || {};
   if (!name || !email || !password || !schoolId) {
     return res.status(400).json({ error: "name, email, password and schoolId are required" });
@@ -849,14 +854,14 @@ app.post("/api/auth/teacher/register", async (req, res) => {
   };
   const verificationToken = createEmailVerification(teacher);
   accessControl.teachers.push(teacher);
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
 
   let emailSent = false;
   try {
     emailSent = await sendVerificationEmail(teacher, "teacher", verificationToken);
   } catch (error) {
     accessControl.teachers = accessControl.teachers.filter((item) => item.teacherId !== teacher.teacherId);
-    saveAccessControl(accessControl);
+    await saveAccessControl(accessControl);
     console.error("Teacher verification email failed:", error.message);
     return res.status(502).json({ error: "Account could not be created because the verification email could not be sent." });
   }
@@ -867,7 +872,7 @@ app.post("/api/auth/teacher/register", async (req, res) => {
     emailVerificationRequired: REQUIRE_EMAIL_VERIFICATION,
     teacher: { teacherId: teacher.teacherId, name: teacher.name, email: teacher.email, schoolId: teacher.schoolId, teachingLevel: teacher.teachingLevel }
   });
-});
+}));
 
 app.post("/api/auth/teacher/login", (req, res) => {
   const { email, password } = req.body || {};
@@ -891,7 +896,7 @@ app.post("/api/auth/teacher/login", (req, res) => {
   });
 });
 
-app.post("/api/auth/student/register", async (req, res) => {
+app.post("/api/auth/student/register", asyncRoute(async (req, res) => {
   const { name, email, password, schoolId, teacherId, classId, gradeLevel } = req.body || {};
   if (!name || !email || !password || !schoolId || !teacherId) {
     return res.status(400).json({ error: "name, email, password, schoolId and teacherId are required" });
@@ -959,7 +964,7 @@ app.post("/api/auth/student/register", async (req, res) => {
     }
   }
 
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
 
   let emailSent = false;
   try {
@@ -969,7 +974,7 @@ app.post("/api/auth/student/register", async (req, res) => {
     if (linkedClass) {
       linkedClass.students = linkedClass.students.filter((item) => item.studentId !== student.studentId);
     }
-    saveAccessControl(accessControl);
+    await saveAccessControl(accessControl);
     console.error("Student verification email failed:", error.message);
     return res.status(502).json({ error: "Account could not be created because the verification email could not be sent." });
   }
@@ -980,7 +985,7 @@ app.post("/api/auth/student/register", async (req, res) => {
     emailVerificationRequired: REQUIRE_EMAIL_VERIFICATION,
     student: publicStudent(student)
   });
-});
+}));
 
 app.post("/api/auth/student/login", (req, res) => {
   const { email, password } = req.body || {};
@@ -1007,7 +1012,7 @@ app.post("/api/auth/student/login", (req, res) => {
   });
 });
 
-app.post("/api/auth/resend-verification", async (req, res) => {
+app.post("/api/auth/resend-verification", asyncRoute(async (req, res) => {
   const role = String(req.body?.role || "").trim();
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!["teacher", "student"].includes(role) || !email || email.length > 254) {
@@ -1039,7 +1044,7 @@ app.post("/api/auth/resend-verification", async (req, res) => {
   const verificationToken = createEmailVerification(account);
   try {
     await sendVerificationEmail(account, role, verificationToken);
-    saveAccessControl(accessControl);
+    await saveAccessControl(accessControl);
   } catch (error) {
     if (previousTokenHash) account.emailVerificationTokenHash = previousTokenHash;
     else delete account.emailVerificationTokenHash;
@@ -1049,9 +1054,9 @@ app.post("/api/auth/resend-verification", async (req, res) => {
     return res.status(502).json({ error: "Could not send the verification email. Please try again later." });
   }
   return res.status(202).json({ ok: true, message: "If the account needs verification, a new link will be sent." });
-});
+}));
 
-app.get("/api/auth/verify-email", (req, res) => {
+app.get("/api/auth/verify-email", asyncRoute(async (req, res) => {
   const role = String(req.query.role || "").trim();
   const id = String(req.query.id || "").trim();
   const token = String(req.query.token || "").trim();
@@ -1066,11 +1071,11 @@ app.get("/api/auth/verify-email", (req, res) => {
   account.emailVerifiedAt = Date.now();
   delete account.emailVerificationTokenHash;
   delete account.emailVerificationExpiresAt;
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.send("Email verified successfully. You can now return to JamPak EDU and sign in.");
-});
+}));
 
-app.post("/api/owner/teachers/create", (req, res) => {
+app.post("/api/owner/teachers/create", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["owner"]);
   if (!auth) return;
   const { name, email, password, schoolId, teachingLevel } = req.body || {};
@@ -1091,9 +1096,9 @@ app.post("/api/owner/teachers/create", (req, res) => {
     createdAt: Date.now()
   };
   accessControl.teachers.push(teacher);
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, teacher: { teacherId: teacher.teacherId, name: teacher.name, email: teacher.email } });
-});
+}));
 
 app.get("/api/owner/teachers", (req, res) => {
   const auth = requireRole(req, res, ["owner"]);
@@ -1107,7 +1112,7 @@ app.get("/api/owner/teachers", (req, res) => {
   return res.json({ teachers });
 });
 
-app.post("/api/teacher/classes/create", (req, res) => {
+app.post("/api/teacher/classes/create", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
   if (!auth) return;
   const { className, gradeBand, subject } = req.body || {};
@@ -1123,9 +1128,9 @@ app.post("/api/teacher/classes/create", (req, res) => {
     createdAt: Date.now()
   };
   accessControl.classes.push(teacherClass);
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, class: teacherClass });
-});
+}));
 
 app.get("/api/teacher/classes", (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
@@ -1133,7 +1138,7 @@ app.get("/api/teacher/classes", (req, res) => {
   return res.json({ classes: listTeacherClasses(auth.teacherId) });
 });
 
-app.post("/api/student/classes/join", (req, res) => {
+app.post("/api/student/classes/join", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["student"]);
   if (!auth) return;
   const classCode = String(req.body?.classCode || "").trim().toUpperCase();
@@ -1150,7 +1155,7 @@ app.post("/api/student/classes/join", (req, res) => {
   if (!teacherClass.students.some((item) => item.studentId === student.studentId)) {
     teacherClass.students.push({ studentId: student.studentId, name: student.name, avatarId: student.avatarId || "island-ace" });
   }
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, student: publicStudent(student), class: {
     classId: teacherClass.classId,
     className: teacherClass.className,
@@ -1159,7 +1164,7 @@ app.post("/api/student/classes/join", (req, res) => {
     gradeBand: teacherClass.gradeBand,
     subject: teacherClass.subject
   } });
-});
+}));
 
 app.get("/api/student/classes", (req, res) => {
   const auth = requireRole(req, res, ["student"]);
@@ -1176,7 +1181,7 @@ app.get("/api/student/classes", (req, res) => {
   return res.json({ classes });
 });
 
-app.post("/api/teacher/classes/:classId/students/add", (req, res) => {
+app.post("/api/teacher/classes/:classId/students/add", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
   if (!auth) return;
   const teacherClass = accessControl.classes.find((cls) => cls.classId === req.params.classId && cls.teacherId === auth.teacherId);
@@ -1198,11 +1203,11 @@ app.post("/api/teacher/classes/:classId/students/add", (req, res) => {
     });
   });
 
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, class: teacherClass });
-});
+}));
 
-app.post("/api/teacher/quizzes/create", (req, res) => {
+app.post("/api/teacher/quizzes/create", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
   if (!auth) return;
   const {
@@ -1246,9 +1251,9 @@ app.post("/api/teacher/quizzes/create", (req, res) => {
     createdAt: Date.now()
   };
   accessControl.quizzes.push(quiz);
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, quiz });
-});
+}));
 
 app.get("/api/teacher/quizzes", (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
@@ -1256,7 +1261,7 @@ app.get("/api/teacher/quizzes", (req, res) => {
   return res.json({ quizzes: listTeacherQuizzes(auth.teacherId) });
 });
 
-app.post("/api/teacher/assignments/create", (req, res) => {
+app.post("/api/teacher/assignments/create", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
   if (!auth) return;
   const { classId, title, instructions, activityType = "Quiz", dueDate = "", points = 100 } = req.body || {};
@@ -1276,9 +1281,9 @@ app.post("/api/teacher/assignments/create", (req, res) => {
     createdAt: Date.now()
   };
   accessControl.assignments.push(assignment);
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.status(201).json({ ok: true, assignment });
-});
+}));
 
 app.get("/api/teacher/assignments", (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
@@ -1317,7 +1322,7 @@ app.get("/api/student/assignments", (req, res) => {
   return res.json({ assignments });
 });
 
-app.post("/api/student/assignments/:assignmentId/submit", (req, res) => {
+app.post("/api/student/assignments/:assignmentId/submit", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["student"]);
   if (!auth) return;
   const student = accessControl.students.find((item) => item.studentId === auth.studentId);
@@ -1329,11 +1334,11 @@ app.post("/api/student/assignments/:assignmentId/submit", (req, res) => {
   const submission = { studentId: student.studentId, response: String(req.body?.response || "").trim(), submittedAt: Date.now(), grade: existing?.grade ?? null, feedback: existing?.feedback || "" };
   if (existing) Object.assign(existing, submission);
   else assignment.submissions.push(submission);
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, submission });
-});
+}));
 
-app.post("/api/teacher/assignments/:assignmentId/grade", (req, res) => {
+app.post("/api/teacher/assignments/:assignmentId/grade", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
   if (!auth) return;
   const assignment = accessControl.assignments.find((item) => item.assignmentId === req.params.assignmentId && item.teacherId === auth.teacherId);
@@ -1346,9 +1351,9 @@ app.post("/api/teacher/assignments/:assignmentId/grade", (req, res) => {
   submission.grade = Math.max(0, Math.min(100, Math.round(grade)));
   submission.feedback = String(req.body?.feedback || "").trim();
   submission.gradedAt = Date.now();
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, submission });
-});
+}));
 
 app.post("/api/teacher/quizzes/:quizId/start", (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
@@ -1394,7 +1399,7 @@ app.get("/api/teacher/reviews/pending", (req, res) => {
   return res.json({ pending });
 });
 
-app.post("/api/teacher/reviews/:reviewId/grade", (req, res) => {
+app.post("/api/teacher/reviews/:reviewId/grade", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["teacher"]);
   if (!auth) return;
   const review = accessControl.manualReviews.find((item) => item.reviewId === req.params.reviewId);
@@ -1414,9 +1419,9 @@ app.post("/api/teacher/reviews/:reviewId/grade", (req, res) => {
     if (player) player.score += points;
   }
 
-  saveAccessControl(accessControl);
+  await saveAccessControl(accessControl);
   return res.json({ ok: true, review });
-});
+}));
 
 // -- Browse approved question prompts (never expose answer keys publicly) -
 app.get("/api/questions", (req, res) => {
@@ -1827,7 +1832,7 @@ app.get("/api/session/:sessionId/next-question", asyncRoute(async (req, res) => 
   });
 }));
 
-app.post("/api/session/:sessionId/answer", (req, res) => {
+app.post("/api/session/:sessionId/answer", asyncRoute(async (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -1879,7 +1884,7 @@ app.post("/api/session/:sessionId/answer", (req, res) => {
         status: "pending",
         createdAt: Date.now()
       });
-      saveAccessControl(accessControl);
+      await saveAccessControl(accessControl);
     } else {
       const submitted = normalizeFreeText(answerText);
       const acceptable = (q.acceptableAnswers || []).map((a) => normalizeFreeText(a)).filter(Boolean);
@@ -1927,7 +1932,7 @@ app.post("/api/session/:sessionId/answer", (req, res) => {
     totalPlayers: progress ? progress.totalPlayers : null,
     leaderboard: leaderboardFor(session)
   });
-});
+}));
 
 app.use((error, _req, res, next) => {
   console.error("Request failed:", error);
@@ -1935,13 +1940,33 @@ app.use((error, _req, res, next) => {
   return res.status(500).json({ error: "The server could not complete this request. Please try again." });
 });
 
+function normalizeAccessControlState(state) {
+  const normalized = loadAccessControl(state);
+  normalized.schools = normalizeSchoolCatalog(normalized.schools);
+  normalized.teachers = normalizeTeacherProfiles(normalized.teachers, normalized.schools);
+  normalized.students.forEach((student) => {
+    if (!Array.isArray(student.memberships)) student.memberships = normalizeStudentMemberships(student);
+  });
+  normalized.classes.forEach((teacherClass) => {
+    if (!teacherClass.classCode) teacherClass.classCode = createClassCode(teacherClass.gradeBand);
+  });
+  return normalized;
+}
+
 async function startServer() {
   if (database.isConfigured()) {
     questionBank = await database.initialize(questionBank);
+    const storedState = await database.loadApplicationState();
+    Object.assign(accessControl, normalizeAccessControlState(storedState || accessControl));
+    await saveAccessControl(accessControl);
     console.log(`Connected to PostgreSQL. Loaded ${questionBank.length} questions.`);
     const pendingCount = questionBank.filter((question) => question.reviewStatus === "pending").length;
     if (pendingCount) console.log(`${pendingCount} questions need teacher review before public play.`);
   } else {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("DATABASE_URL is required in production so account, classroom, question, and leaderboard data survive restarts.");
+    }
+    await saveAccessControl(accessControl);
     console.warn("DATABASE_URL is not set; quiz results and question changes are not durable across restarts.");
   }
   app.listen(PORT, () => console.log(`Jam-Pak EDU running: http://localhost:${PORT}`));

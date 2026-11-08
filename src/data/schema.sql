@@ -43,3 +43,9 @@ CREATE TABLE IF NOT EXISTS quiz_results (
 
 CREATE INDEX IF NOT EXISTS quiz_results_leaderboard_idx
   ON quiz_results (grade_band, subject, score DESC, completed_at ASC);
+
+CREATE TABLE IF NOT EXISTS application_state (
+  state_key TEXT PRIMARY KEY,
+  state JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

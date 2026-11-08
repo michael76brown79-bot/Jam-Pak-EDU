@@ -40,7 +40,7 @@ The sender domain must be verified in Resend. Keep `RESEND_API_KEY` private and 
 
 ### PostgreSQL Setup (Render)
 
-The app uses PostgreSQL for approved/reviewable questions and durable quiz results when `DATABASE_URL` is configured.
+Production requires PostgreSQL for accounts, classrooms, approved/reviewable questions, and durable quiz results. Without `DATABASE_URL`, the production server will stop with a clear startup error rather than appear healthy while losing user data on restart.
 
 1. In Render, create a **PostgreSQL** database in the same region as the web service.
 2. Copy its **Internal Database URL**.
@@ -51,12 +51,12 @@ The app uses PostgreSQL for approved/reviewable questions and durable quiz resul
    DATABASE_SSL=true
    ```
 
-4. Deploy the web service. On first connection it creates the tables and indexes defined in `src/data/schema.sql`, then imports the existing `src/data/question-bank.json`. Question records are keyed to an individual grade and subject; quizzes no longer substitute questions from other grades or subjects.
+4. Deploy the web service. On first connection it creates the tables and indexes defined in `src/data/schema.sql`, imports the existing `src/data/question-bank.json`, and copies any existing `src/data/access-control.json` data into PostgreSQL. Question records are keyed to an individual grade and subject; quizzes no longer substitute questions from other grades or subjects.
 5. In the Teacher Portal, open **Questions** to review imported questions. With the current 703-question file, about 580 questions will need review because they lack a clear explanation or repeat a prompt across grades. They are kept in the database, but do not enter public quizzes until a teacher sets the exact grade/topic, adds an explanation, and approves them. The review queue is paged so it remains usable on a phone.
 
 The home-page leaderboard ranks each nickname's best score and can be filtered by grade and subject. Ask players to choose nicknames, not real names. This first version stores game scores without tying them to verified student accounts, so it is a friendly game ranking, not an official school grade.
 
-For local development, PostgreSQL is optional: run `npm start` without `DATABASE_URL`. That mode is only a local preview; quiz results are held in memory and will not survive a restart. To exercise persistent storage locally, set `DATABASE_URL` to a development database before starting the server.
+For local development, PostgreSQL is optional: run `npm start` without `DATABASE_URL`. That mode is only a local preview; account and classroom state is saved to the local JSON file, while quiz results are held in memory and will not survive a restart. To exercise persistent storage locally, set `DATABASE_URL` to a development database before starting the server.
 
 If **Root Directory** is set to `src`, the start command must instead be `node server.js`. The recommended configuration is to leave **Root Directory** blank and use `npm start`.
 
@@ -91,8 +91,9 @@ The server uses Render's `PORT` environment variable and falls back to port `300
 PostgreSQL currently stores:
 - `questions` — grade, subject, topic, prompt, answer choices, answer key, explanation, review status, and author metadata
 - `quiz_results` — nickname, grade, subject, score, and completion counts for the leaderboard
+- `application_state` — teacher/student accounts and their password hashes, schools, classes, quizzes, assignments, and manual-review records as one JSON document
 
-The first PostgreSQL startup imports the existing question bank without deleting the JSON source. Teacher/student accounts, schools, classes, assignments, and some dashboard history still use `src/data/access-control.json` or browser storage. **Do not treat this partial migration as production-ready account storage**: migrate those records to PostgreSQL and connect student results to verified accounts before relying on student progress or official grades in a public launch.
+On the first PostgreSQL startup, existing question and account JSON data is imported without deleting its source files. Keep the Render web service at one instance while account/classroom records are stored as a single JSON document; this interim storage is durable, but it is not designed for multiple app instances writing concurrently. Student quiz history is still not tied to verified student accounts, and some dashboard history remains in browser storage. Do not rely on leaderboard results as official school grades.
 
 ---
 

@@ -15,6 +15,7 @@ if (pool) {
 }
 
 const schemaFile = path.join(__dirname, "..", "data", "schema.sql");
+let applicationStateWrites = Promise.resolve();
 const QUESTION_COLUMNS = [
   "id", "grade_band", "subject", "category", "difficulty", "type", "prompt",
   "options", "correct_option_id", "correct_boolean", "acceptable_answers",
@@ -166,6 +167,30 @@ async function listQuestionsByStatus(reviewStatus, { limit, offset }) {
   return { questions: rows.map(fromQuestionRow), total: countRows[0].total };
 }
 
+async function loadApplicationState() {
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    "SELECT state FROM application_state WHERE state_key = 'primary'"
+  );
+  return rows[0] ? rows[0].state : null;
+}
+
+async function saveApplicationState(state) {
+  if (!pool) return;
+  const serializedState = JSON.stringify(state);
+  const write = applicationStateWrites.then(() => pool.query(
+      `INSERT INTO application_state (state_key, state)
+       VALUES ('primary', $1::jsonb)
+       ON CONFLICT (state_key)
+       DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()`,
+      [serializedState]
+    ));
+  applicationStateWrites = write.catch((error) => {
+    console.error("Failed to persist application state:", error.message);
+  });
+  await write;
+}
+
 async function recordResults(results) {
   if (!pool || !results.length) return;
   const client = await pool.connect();
@@ -244,8 +269,10 @@ module.exports = {
   initialize,
   insertQuestions,
   isConfigured,
+  loadApplicationState,
   listQuestionsByStatus,
   recordResults,
   resetQuestions,
+  saveApplicationState,
   updateQuestionReview
 };
