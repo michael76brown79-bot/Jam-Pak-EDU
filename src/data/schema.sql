@@ -49,3 +49,8 @@ CREATE TABLE IF NOT EXISTS application_state (
   state JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS application_migrations (
+  migration_id TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

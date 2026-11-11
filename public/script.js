@@ -1533,9 +1533,9 @@ async function renderTeacherPortal() {
         <div class="tp-review-question">${escapeHTML(question.prompt)}</div>
         <div class="tp-review-answer">Choices / accepted answers: ${escapeHTML(choices)}</div>
         <div class="tp-review-answer">Correct answer: <strong>${escapeHTML(correctAnswer)}</strong></div>
-        <label class="field-label" for="tpQuestionExplanation-${escapeHTML(question.id)}">Student explanation</label>
+        <label class="field-label" for="tpQuestionExplanation-${escapeHTML(question.id)}">Student explanation (optional)</label>
         <textarea id="tpQuestionExplanation-${escapeHTML(question.id)}" rows="2" placeholder="Explain why the correct answer is right.">${escapeHTML(question.explanation || "")}</textarea>
-        <p class="status-note">${escapeHTML(reviewNote || "Review the grade, answer, and explanation before approving this question.")}</p>
+        <p class="status-note">${escapeHTML(reviewNote || "Review the grade and correct answer before approving. An explanation is optional.")}</p>
         <div class="tp-review-btns">
           <button class="btn-primary tp-question-approve-btn" data-questionid="${escapeHTML(question.id)}">Approve</button>
           <button class="btn-back tp-question-reject-btn" data-questionid="${escapeHTML(question.id)}">Reject</button>
@@ -1668,7 +1668,7 @@ async function renderTeacherPortal() {
         <div class="tp-section hidden" id="tp-tab-questions">
           <div class="panel">
             <p class="section-heading">Questions Awaiting Approval (${questionReviewTotal})</p>
-            <p class="status-note">Only approved questions appear in quizzes. Check the grade, correct answer, and explanation before approving.</p>
+            <p class="status-note">Only approved questions appear in quizzes. Check the grade and correct answer before approving; explanations are optional.</p>
             ${questionReviewError ? `<p class="status-note">${escapeHTML(questionReviewError)}</p>` : ""}
             ${questionReviewsHTML || `<p class="status-note">No questions need review right now.</p>`}
             ${questionReviews.length < questionReviewTotal ? `<button class="btn-back" id="tpLoadMoreQuestionsBtn">Load more questions</button>` : ""}
@@ -1687,7 +1687,7 @@ async function renderTeacherPortal() {
             </select>
             <input type="text" id="tqPrompt" placeholder="Question prompt"/>
             <div id="tqTypeFields"></div>
-            <label class="field-label" for="tqExplanation">Student explanation (required)</label>
+            <label class="field-label" for="tqExplanation">Student explanation (optional)</label>
             <textarea id="tqExplanation" rows="3" placeholder="Explain why the correct answer is right."></textarea>
             <button class="btn-primary btn-gold" id="tpAddQuestionBtn">Add Question</button>
             <p class="status-note" id="tpQuestionStatus"></p>
@@ -2009,10 +2009,6 @@ async function renderTeacherPortal() {
       status.textContent = "Add a specific topic or category.";
       return;
     }
-    if (explanation.length < 10) {
-      status.textContent = "Add a clear explanation of at least 10 characters.";
-      return;
-    }
     const q = { gradeBand, subject, category, difficulty: "easy", type, prompt, options: [], explanation };
     if (type === "mcq") {
       const a = document.getElementById("tqOptA").value.trim();
@@ -2140,7 +2136,7 @@ function renderQuestionBuilder() {
           <input type="text" id="qbPrompt" placeholder="Type the question"/>
 
           <div id="qbTypeFields"></div>
-          <label class="field-label" for="qbExplanation">Student explanation (required)</label>
+          <label class="field-label" for="qbExplanation">Student explanation (optional)</label>
           <textarea id="qbExplanation" rows="3" placeholder="Explain why the correct answer is right."></textarea>
 
           <button class="btn-primary btn-gold" id="qbSaveBtn">Add Question</button>
@@ -2255,11 +2251,6 @@ function renderQuestionBuilder() {
       options: [],
       explanation: document.getElementById("qbExplanation").value.trim()
     };
-    if (payload.explanation.length < 10) {
-      status.textContent = "Add a clear explanation of at least 10 characters.";
-      return;
-    }
-
     if (type === "mcq") {
       const a = document.getElementById("qbOptA").value.trim();
       const b = document.getElementById("qbOptB").value.trim();

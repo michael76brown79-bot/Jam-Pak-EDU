@@ -6,6 +6,11 @@ const express = require("express");
 const { questions: seedQuestions } = require("./data/questions");
 const { createSession, createRoomCode, shouldShowLeaderboard } = require("./core/session");
 const { getNextQuestion } = require("./core/quizEngine");
+const {
+  CROSS_GRADE_REVIEW_NOTE,
+  findCrossGradeDuplicateIds,
+  applyLegacyQuestionReview
+} = require("./core/questionReview");
 const database = require("./core/database");
 
 const app  = express();
@@ -175,17 +180,14 @@ function loadBank() {
       const saved = JSON.parse(fs.readFileSync(bankFile, "utf8"));
       if (Array.isArray(saved) && saved.length) {
         console.log(`Loaded ${saved.length} questions from disk.`);
-        return saved.map((question) => ({
-          ...question,
-          reviewStatus: question.reviewStatus || "approved"
-        }));
+        return applyLegacyQuestionReview(saved);
       }
     } catch (e) {
       console.warn("Could not parse question-bank.json, using seed.", e.message);
     }
   }
   console.log(`Using ${seedQuestions.length} seed questions.`);
-  return seedQuestions.map((question) => ({ ...question, reviewStatus: "approved" }));
+  return applyLegacyQuestionReview(seedQuestions);
 }
 
 function saveBank(bank) {
@@ -1654,9 +1656,6 @@ app.patch("/api/questions/:questionId/review", asyncRoute(async (req, res) => {
   if (!/^(?:[1-9]|1[01])$/.test(gradeBand) || !subject || !category) {
     return res.status(400).json({ error: "Choose an individual grade, subject, and topic before reviewing." });
   }
-  if (reviewStatus === "approved" && explanation.length < 10) {
-    return res.status(400).json({ error: "Add a clear explanation of at least 10 characters before approving." });
-  }
   if (reviewStatus === "approved" && question.type === "mcq"
     && (!Array.isArray(question.options) || question.options.length < 2
       || !question.options.some((option) => option.id === question.correctOptionId))) {
@@ -1700,24 +1699,15 @@ app.post("/api/questions/import", asyncRoute(async (req, res) => {
   }
 
   const normalized = incoming.map((q, i) => normalizeQuestion(q, i));
+  const crossGradeDuplicateIds = findCrossGradeDuplicateIds(questionBank.concat(normalized));
   normalized.forEach((q) => {
     q.authorRole = auth.role;
-    const normalizedPrompt = String(q.prompt).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const crossGradeDuplicate = questionBank.concat(normalized.filter((other) => other !== q)).some((existing) =>
-      String(existing.subject).toLowerCase() === String(q.subject).toLowerCase()
-      && String(existing.gradeBand) !== String(q.gradeBand)
-      && String(existing.prompt).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === normalizedPrompt
-    );
+    const crossGradeDuplicate = crossGradeDuplicateIds.has(q.id);
     const reviewNotes = [];
     if (auth.role === "teacher") reviewNotes.push("Submitted by a teacher; approval is required.");
-    if (crossGradeDuplicate) reviewNotes.push("This prompt appears in another grade; confirm the correct grade.");
-    if (String(q.explanation || "").trim().length < 10) reviewNotes.push("Add a clear explanation for students.");
+    if (crossGradeDuplicate) reviewNotes.push(CROSS_GRADE_REVIEW_NOTE);
     q.reviewNote = reviewNotes.join(" ");
-    q.reviewStatus = auth.role === "owner"
-      && String(q.explanation || "").trim().length >= 10
-      && !crossGradeDuplicate
-      ? "approved"
-      : "pending";
+    q.reviewStatus = auth.role === "owner" && !crossGradeDuplicate ? "approved" : "pending";
     if (auth.role === "teacher") q.authorTeacherId = auth.teacherId;
   });
 
@@ -1742,7 +1732,7 @@ app.post("/api/questions/import", asyncRoute(async (req, res) => {
 app.delete("/api/questions/reset", asyncRoute(async (req, res) => {
   const auth = requireRole(req, res, ["owner"]);
   if (!auth) return;
-  questionBank = seedQuestions.map((question) => ({ ...question, reviewStatus: "approved" }));
+  questionBank = applyLegacyQuestionReview(seedQuestions);
   if (database.isConfigured()) {
     await database.resetQuestions(questionBank);
   }

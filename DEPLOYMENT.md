@@ -36,7 +36,9 @@ APP_BASE_URL=https://your-service.onrender.com
 REQUIRE_EMAIL_VERIFICATION=true
 ```
 
-The sender domain must be verified in Resend. Keep `RESEND_API_KEY` private and never put it in frontend files or commit it to GitHub. Set `REQUIRE_EMAIL_VERIFICATION=true` before opening registration to the public. The same Resend configuration sends account-verification and password-reset links. On sign-in pages, the verification resend option only appears after a login attempt says the account needs verification; password reset has its own button.
+The sender domain must be verified in Resend. Resend's shared `onboarding@resend.dev` test sender can only deliver to the email address on the Resend account; it is not suitable for sending to Jam-Pak users. For public use, add a domain you own to Resend, publish its DNS records with your domain provider, and wait for Resend to verify it. Then set `EMAIL_FROM` on the **Jam-Pak EDU web service** in Render to an address on that verified domain, such as `JamPak EDU <noreply@mail.yourdomain.com>`. Render's `onrender.com` hostname is not a domain you own and cannot be used as the email sender domain. `APP_BASE_URL` is separate: it should remain the deployed Jam-Pak EDU website URL.
+
+Keep `RESEND_API_KEY` private and never put it in frontend files or commit it to GitHub. Set `REQUIRE_EMAIL_VERIFICATION=true` before opening registration to the public. The same Resend configuration sends account-verification and password-reset links. On sign-in pages, the verification resend option only appears after a login attempt says the account needs verification; password reset has its own button.
 
 ### PostgreSQL Setup (Render)
 
@@ -54,7 +56,9 @@ Production requires PostgreSQL for accounts, classrooms, approved/reviewable que
 Render's internal PostgreSQL connections use self-signed certificates. With `DATABASE_SSL=true`, Jam-Pak requires an encrypted TLS connection while accepting Render's internal certificate; use the **Internal Database URL** only for a same-region Render service. Do not use this setting for an untrusted public database.
 
 4. Deploy the web service. On first connection it creates the tables and indexes defined in `src/data/schema.sql`, imports the existing `src/data/question-bank.json`, and copies any existing `src/data/access-control.json` data into PostgreSQL. Question records are keyed to an individual grade and subject; quizzes no longer substitute questions from other grades or subjects.
-5. In the Teacher Portal, open **Questions** to review imported questions. With the current 703-question file, about 580 questions will need review because they lack a clear explanation or repeat a prompt across grades. They are kept in the database, but do not enter public quizzes until a teacher sets the exact grade/topic, adds an explanation, and approves them. The review queue is paged so it remains usable on a phone.
+5. In the Teacher Portal, open **Questions** to review imported questions. Missing explanations do not block a question from being played or approved; clear explanations are welcome but optional. Questions with the same prompt in different grades remain in review until someone checks the grade assignment. The question-review queue is paged so it remains usable on a phone.
+
+The current 713-question file has 98 questions with prompts repeated across grade levels. The other questions are not held back just because they lack explanations. On deployment, Jam-Pak updates existing review records that were pending only because an explanation was missing; cross-grade repeats stay in the review queue. This makes about 615 questions available, with exact grade and subject matching still enforced. Ten new original English questions add five each to Grades 5 and 6.
 
 The global leaderboard is available from the game-complete screen, not from sign-in or dashboard screens. It ranks each nickname's best score and can be filtered by grade and subject. Teacher-created quizzes have a “Show player leaderboard when the quiz ends” setting; class quiz results stay in that game session and are not added to the public leaderboard. Ask public-game players to choose nicknames, not real names. This is a friendly game ranking, not an official school grade.
 

@@ -1,6 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
+const {
+  MISSING_EXPLANATION_REVIEW_NOTE,
+  applyLegacyQuestionReview
+} = require("./questionReview");
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
 const databaseSsl = process.env.DATABASE_SSL === "true";
@@ -97,30 +101,42 @@ function fromQuestionRow(row) {
 async function initialize(legacyQuestions) {
   if (!pool) return null;
   await pool.query(fs.readFileSync(schemaFile, "utf8"));
-  const { rows: countRows } = await pool.query("SELECT COUNT(*)::integer AS count FROM questions");
-  const isInitialImport = countRows[0].count === 0;
-  const grouped = new Map();
-  for (const question of legacyQuestions) {
-    const prompt = String(question.prompt || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const key = `${String(question.subject || "").toLowerCase()}|${prompt}`;
-    if (!prompt) continue;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(question);
+  await insertQuestions(applyLegacyQuestionReview(legacyQuestions));
+  const migrationClient = await pool.connect();
+  let releasedCount = 0;
+  try {
+    await migrationClient.query("BEGIN");
+    const { rows: migrations } = await migrationClient.query(
+      `INSERT INTO application_migrations (migration_id)
+       VALUES ('questions-explanations-optional-v1')
+       ON CONFLICT (migration_id) DO NOTHING
+       RETURNING migration_id`
+    );
+    if (migrations.length) {
+      const { rowCount } = await migrationClient.query(
+        `UPDATE questions
+         SET review_status = CASE
+             WHEN review_status = 'pending'
+               AND btrim(replace(review_note, $1, '')) = '' THEN 'approved'
+             ELSE review_status
+           END,
+           review_note = btrim(replace(review_note, $1, '')),
+           updated_at = NOW()
+         WHERE review_note LIKE '%' || $1 || '%'`,
+        [MISSING_EXPLANATION_REVIEW_NOTE]
+      );
+      releasedCount = rowCount;
+    }
+    await migrationClient.query("COMMIT");
+  } catch (error) {
+    await migrationClient.query("ROLLBACK");
+    throw error;
+  } finally {
+    migrationClient.release();
   }
-  const migrationQuestions = legacyQuestions.map((question) => {
-    const prompt = String(question.prompt || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const group = grouped.get(`${String(question.subject || "").toLowerCase()}|${prompt}`) || [];
-    const appearsAcrossGrades = new Set(group.map((item) => String(item.gradeBand))).size > 1;
-    const missingExplanation = String(question.explanation || "").trim().length < 10;
-    const reviewNotes = [];
-    if (appearsAcrossGrades) reviewNotes.push("This prompt appears in another grade; confirm the correct grade.");
-    if (missingExplanation) reviewNotes.push("Add a clear explanation for students.");
-    const needsLegacyReview = reviewNotes.length > 0;
-    return isInitialImport && needsLegacyReview && question.reviewStatus === "approved"
-      ? { ...question, reviewStatus: "pending", reviewNote: reviewNotes.join(" ") }
-      : question;
-  });
-  await insertQuestions(migrationQuestions);
+  if (releasedCount) {
+    console.log(`Updated ${releasedCount} questions previously held only for missing explanations.`);
+  }
   const { rows } = await pool.query("SELECT * FROM questions ORDER BY created_at, id");
   return rows.map(fromQuestionRow);
 }
